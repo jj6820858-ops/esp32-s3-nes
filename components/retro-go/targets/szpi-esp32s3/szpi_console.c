@@ -4,10 +4,14 @@
 
 /* 复用上游输入任务读取 UART0，不新增任务，也不改模拟器的手柄接口。
  * 串口仅用于调试；实体触摸、BOOT 按键始终可以正常使用。 */
+/* action 是单字节待处理命令，不是队列；主循环取走前的新命令可能覆盖旧命令。
+ * 输入侧只记请求，涉及切换应用、文件和音频的动作交给主循环执行。 */
 static volatile uint8_t action;
 
 uint32_t szpi_console_read_keys(void)
 {
+    /* 系统计时器由微秒换算为毫秒；一次命令模拟按住单键 250 ms。
+     * 每次最多处理 8 个字符，避免串口连续输入长期占用输入扫描任务。 */
     static uint32_t keys, deadline;
     uint32_t now=(uint32_t)(rg_system_timer()/1000);
     uint8_t c;
@@ -25,6 +29,7 @@ uint32_t szpi_console_read_keys(void)
         }
         if (key) { keys=key; deadline=now+250; RG_LOGI("UART pad: 0x%04x",(unsigned)key); }
     }
+    /* 有符号差值用于比较短期限，可跨过 uint32_t 毫秒计数器回绕点。 */
     return (int32_t)(deadline-now)>0 ? keys : 0;
 }
 
@@ -35,12 +40,16 @@ void szpi_console_poll(void)
     if (command=='e') {
         /* 绕过 NES APU，用 440Hz PCM 单独验证 I2S → DAC → 功放 → 喇叭。
          * 保留并恢复原音量；测试期间暂停游戏主循环，但继续喂系统统计。 */
+        /* 此音源不经过 ROM、6502 或 NES APU：能响只证明后段音频链路可用；
+         * 游戏 A 键发声测试还须确认 APU 产生的采样确实送到同一输出。 */
         int volume=rg_audio_get_volume(), rate=rg_audio_get_sample_rate();
         bool mute=rg_audio_get_mute();
         rg_audio_set_mute(false); rg_audio_set_volume(75);
         RG_LOGI("Speaker tone begin: rate=%d PA=0x%02x DAC31=0x%02x DAC32=0x%02x",
             rate, rg_i2c_read_byte(0x19,0x01), rg_i2c_read_byte(0x18,0x31),
             rg_i2c_read_byte(0x18,0x32));
+        /* 一个 frame 同时包含左右声道样本；count 是帧数，不是字节数。
+         * 每秒翻转 880 次电平生成 440 Hz 方波，累计输出约 2 秒。 */
         rg_audio_frame_t pcm[256];
         for (unsigned offset=0; offset<(unsigned)rate*2; offset+=256) {
             size_t count=RG_MIN(256,(unsigned)rate*2-offset);

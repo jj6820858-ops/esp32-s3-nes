@@ -103,11 +103,14 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
     return true;
 }
 
+/* 收集原始按键位掩码。每一位对应一个 RG_KEY_*，不同来源通过 OR 合并，
+ * 因此触摸 A、方向键和实体 BOOT 可走同一套上层输入接口。 */
 bool rg_input_read_gamepad_raw(uint32_t *out)
 {
     uint32_t state = 0;
 
 #ifdef RG_TARGET_SZPI_ESP32S3
+    // 本板触摸与 UART 调试键先合入状态，下面继续叠加 GPIO 上的 BOOT 键。
     state |= szpi_read_touch();
     state |= szpi_console_read_keys();
 #endif
@@ -217,6 +220,8 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
     return true;
 }
 
+/* 后台约每 10ms 采样一次，将每个按键的连续采样位移入历史值后判定按下/释放。
+ * 游戏主循环读取已更新的 gamepad_state，不需要在每帧直接访问触摸芯片。 */
 static void input_task(void *arg)
 {
     uint8_t debounce[RG_KEY_COUNT];

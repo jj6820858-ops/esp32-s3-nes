@@ -130,6 +130,9 @@ static const char *get_file_path(retro_file_t *file)
     return buffer;
 }
 
+/* 从菜单进入游戏：先固定应用分区名、模拟器名称和 ROM 路径，再交给系统重启切换。
+ * 这里不会在 launcher 内直接执行 6502 游戏；NES 入口位于另一个 Flash 应用中。
+ * load_state=-1 表示正常启动，其余值编码成恢复标志和存档槽编号。 */
 static void application_start(retro_file_t *file, int load_state)
 {
     RG_ASSERT_ARG(file);
@@ -142,7 +145,7 @@ static void application_start(retro_file_t *file, int load_state)
         flags |= RG_BOOT_RESUME;
         flags |= (load_state << 4) & RG_BOOT_SLOT_MASK;
     }
-    bookmark_add(BOOK_TYPE_RECENT, file); // This could relocate *file, but we no longer need it
+    bookmark_add(BOOK_TYPE_RECENT, file); // 最近记录可能使 *file 搬移；上面已复制所需字符串。
     rg_system_switch_app(part, name, path, flags);
 }
 

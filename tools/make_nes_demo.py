@@ -6,7 +6,10 @@
 from pathlib import Path
 import struct
 
+# 注意：运行本脚本会更新工程内固定的 .nes 和 szpi_demo.c 两个输出文件。
+# 练习时先复制脚本并修改下方 out/target 路径，避免覆盖原测试程序。
 root=Path(__file__).resolve().parents[1]
+# code 保存 6502 机器码；标签以游戏 CPU 的 $8000 为起点，与 ESP32 地址无关。
 code=bytearray(); labels={}; fixups=[]
 def emit(*values): code.extend(values)
 def label(name): labels[name]=0x8000+len(code)
@@ -16,6 +19,7 @@ def branch(op, name): emit(op,0); fixups.append((len(code)-1,name,True))
 def store(address,value): emit(0xa9,value); absolute(0x8d,address)
 def ppu_address(address): store(0x2006,address>>8); store(0x2006,address&255)
 
+# 复位入口：设置 6502 状态和栈，关闭渲染，并等待 PPU 经过两个垂直空白期。
 label('reset'); emit(0x78,0xd8,0xa2,0xff,0x9a,0xe8)
 for address in (0x2000,0x2001,0x4010,0x4015): absolute(0x8e,address)
 for i in range(2):
@@ -26,6 +30,8 @@ for page in (0,1,3,4,5,6,7): absolute(0x9d,page*256)
 emit(0xe8); branch(0xd0,'clear')
 emit(0xa9,0xff,0xa2,0); label('hide'); absolute(0x9d,0x0200)
 emit(0xe8); branch(0xd0,'hide')
+# 一个精灵的 OAM 记录由 Y、图块索引、属性、X 四个字节组成。
+# 方向键改变 $0200/$0203；稍后通过 $4014 将这一页复制到 PPU 的精灵内存。
 for address,value in ((0x0200,112),(0x0201,1),(0x0202,0),(0x0203,128)):
     store(address,value)
 ppu_address(0x3f00); emit(0xa2,0)
@@ -38,9 +44,11 @@ for address,text in ((0x20c4,'SZPI NES READY'),(0x2144,'D PAD MOVE'),
                      (0x21c4,'A TONE B COLOR'),(0x2244,'M OPENS MENU')):
     ppu_address(address)
     for c in text: store(0x2007,ord(c) if c!=' ' else 0)
+# 设置 APU 脉冲声道；主循环根据 A 键改变音量，形成可听见的持续测试音。
 store(0x4015,1); store(0x4000,0x30); store(0x4001,8)
 store(0x4002,0xfd); store(0x4003,8)
 store(0x2005,0); store(0x2005,0); store(0x2001,0x1e)
+# 每轮等垂直空白，再通过 $4016 读取 8 个串行手柄位，更新位置、声音和颜色。
 label('frame'); absolute(0x2c,0x2002); branch(0x10,'frame')
 store(0x4016,1); store(0x4016,0); emit(0x85,0,0xa2,8)
 label('pad'); absolute(0xad,0x4016); emit(0x29,1,0x4a,0x26,0,0xca)
@@ -58,14 +66,17 @@ label('cyan'); emit(0xa9,0x21); label('color_done'); absolute(0x8d,0x2007)
 store(0x2003,0); store(0x4014,2); store(0x2005,0); store(0x2005,0)
 jump(0x4c,'frame'); label('interrupt'); emit(0x40)
 label('colors'); emit(*([0x0f,0x30,0x21,0x11]*4+[0x0f,0x21,0x30,0x11]*4))
+# 标签地址确定后回填跳转：分支使用带符号 8 位相对偏移，普通跳转使用 16 位地址。
 for pos,name,relative in fixups:
     address=labels[name]
     if relative:
         delta=address-(0x8000+pos+1); assert -128<=delta<=127
         code[pos]=delta&255
     else: code[pos:pos+2]=struct.pack('<H',address)
+# NROM 使用 16 KiB PRG；镜像到 CPU 高地址后，末尾六字节对应 NMI/复位/IRQ 向量。
 prg=bytearray(16384); prg[:len(code)]=code
 prg[-6:]=struct.pack('<HHH',labels['interrupt'],labels['reset'],labels['interrupt'])
+# CHR 保存图块图案：每个 8×8 图块占 16 字节，下面构造自编字形和精灵图案。
 chr_rom=bytearray(8192)
 font={'A':[2,5,7,5,5],'B':[6,5,6,5,6],'C':[7,4,4,4,7],
       'D':[6,5,5,5,6],'E':[7,4,6,4,7],'I':[7,2,2,2,7],
@@ -75,6 +86,7 @@ font={'A':[2,5,7,5,5],'B':[6,5,6,5,6],'C':[7,4,4,4,7],
       'V':[5,5,5,5,2],'Y':[5,5,2,2,2],'Z':[7,1,2,4,7]}
 for c,rows in font.items(): chr_rom[ord(c)*16+1:ord(c)*16+6]=bytes(v<<3 for v in rows)
 chr_rom[16:24]=bytes((0x3c,0x7e,0xff,0xdb,0xff,0xa5,0x7e,0x3c))
+# 16 字节 iNES 头声明 1×16 KiB PRG、1×8 KiB CHR、Mapper 0；随后拼接两段数据。
 rom=b'NES\x1a'+bytes((1,1))+bytes(10)+prg+chr_rom
 assert len(rom)==24592
 out=root/'sdcard'/'roms'/'nes'/'SZPI-Controls.nes'; out.write_bytes(rom)

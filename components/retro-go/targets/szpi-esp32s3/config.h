@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // 实战派板级适配入口：模拟器不关心引脚，只通过这些配置连接真实硬件。
 // 接线来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/
+// RG_* 宏由 Retro-Go 的公共驱动读取；接线配置与模拟器核心因此分开。
+// 板上 I2C0 共享给触摸、PCA9557 和音频控制；LCD 像素走 SPI3，TF 走 SDMMC。
 #include "szpi_board.h"
 #define RG_TARGET_NAME "SZPI-ESP32-S3-N16R8"
 #define RG_PROJECT_NAME "SZPI NES"
@@ -33,10 +35,12 @@
 #define RG_GPIO_LCD_MOSI 40
 #define RG_GPIO_LCD_CLK 41
 #define RG_GPIO_LCD_CS -1
-/* CS 接到 PCA9557，并非 ESP32 的 GPIO，启动时通过 I2C 拉低。 */
+/* CS 接到 PCA9557，并非 ESP32 的 GPIO。平台初始化保持 CS 高，
+ * 等显示驱动建立 SPI mode 2 空闲电平后，再通过 I2C 拉低选中屏幕。 */
 #define RG_GPIO_LCD_DC 39
 #define RG_GPIO_LCD_BCKL 42
 #define RG_GPIO_LCD_BCKL_INVERT 1
+/* 背光 PWM 与 LCD 数据通信独立；背光亮只能证明背光通路已工作。 */
 #define RG_GAMEPAD_GPIO_MAP { {RG_KEY_MENU, .num=0, .pullup=1, .level=0}, }
 /* 唯一实体 BOOT 键打开菜单；其余游戏键由双点触摸提供。 */
 #define RG_RECOVERY_BTN RG_KEY_MENU

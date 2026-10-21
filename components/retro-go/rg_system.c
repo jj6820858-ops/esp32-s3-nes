@@ -124,6 +124,8 @@ IRAM_ATTR void esp_panic_putchar_hook(char c)
     logbuf_putc(&panicTrace, c);
 }
 
+/* 启动信息分成两层：TF 配置保存模拟器名称、ROM 路径和恢复标志；
+ * ESP32 的 OTA 启动记录选择下次执行的 Flash 应用分区。两者都不改 TF 分区表。 */
 static bool update_boot_config(const char *partition, const char *name, const char *args, uint32_t flags)
 {
     if (app.initialized)
@@ -138,8 +140,7 @@ static bool update_boot_config(const char *partition, const char *name, const ch
         rg_storage_delete(RG_BASE_PATH_CONFIG "/boot.json");
     }
 #if defined(ESP_PLATFORM)
-    // Check if the OTA settings are already correct, and if so do not call esp_ota_set_boot_partition
-    // This is simply to avoid an unecessary flash write...
+    // 目标分区已经正确时不重复设置启动记录，避免不必要的 Flash 写入。
     const esp_partition_t *current = esp_ota_get_boot_partition();
     if (partition && (!current || strncmp(current->label, partition, 16) != 0))
     {
@@ -402,6 +403,9 @@ rg_app_t *rg_system_reinit(int sampleRate, const rg_handlers_t *handlers, void *
     return &app;
 }
 
+/* 所有应用共用的启动入口：平台引脚/扩展芯片 → 存储 → 输入 → 配置 → 显示/GUI → 音频。
+ * 本板平台初始化先保持 LCD CS 为高，显示驱动稍后才在 SPI 就绪后选中屏幕。
+ * 返回的 app 还携带上一应用写入的 configNs、romPath 和启动标志。 */
 rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_unused)
 {
     RG_ASSERT(app.initialized == false, "rg_system_init() was already called.");
@@ -421,7 +425,7 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
         .sampleRate = sampleRate,
         .tickRate = 60,
         .frameTime = 1000000 / 60,
-        .frameskip = 1, // This can be overriden on a per-app basis if needed, do not set 0 here!
+        .frameskip = 1, // 应用可按需覆盖；此处保留上游要求的非零默认值。
         .overclock = 0,
         .tickTimeout = 3000000,
         .lowMemoryMode = false,
@@ -437,7 +441,7 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     #endif
     };
 
-    // Do this very early, may be needed to enable serial console
+    // 尽早完成平台级初始化，串口及其他器件可能依赖这里的基础设置。
     platform_init();
 
 #if defined(ESP_PLATFORM)
@@ -463,7 +467,7 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     rg_storage_init();
     rg_input_init();
 
-    // Test for recovery request as early as possible
+    // 尽早检查恢复按键，便于应用配置异常时仍能进入恢复流程。
     for (int timeout = 5, btn; (btn = rg_input_read_gamepad() & RG_RECOVERY_BTN) && timeout >= 0; --timeout)
     {
         RG_LOGW("Button " PRINTF_BINARY_16 " being held down...\n", PRINTF_BINVAL_16(btn));
@@ -514,7 +518,7 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     rg_system_set_timezone(rg_settings_get_string(NS_GLOBAL, SETTING_TIMEZONE, "EST+5"));
     rg_system_load_time();
 
-    // Do these last to not interfere with panic handling above
+    // 最后再登记应用回调，避免干扰前面的崩溃恢复流程。
     if (handlers)
         app.handlers = *handlers;
 
@@ -565,6 +569,8 @@ static int task_wrapper(void *arg)
 }
 #endif
 
+/* 统一任务入口：ESP32 使用 FreeRTOS，可按 affinity 绑定 CPU 核；负值表示不绑定。
+ * 任务表记录函数、参数和句柄，主机 SDL2 构建则走后面的线程实现。 */
 rg_task_t *rg_task_create(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity)
 {
     RG_ASSERT_ARG(name && taskFunc);
@@ -857,20 +863,22 @@ void rg_system_event(int event, void *arg)
         app.handlers.event(event, arg);
 }
 
+/* 关闭顺序取决于器件依赖。显示的 CS 和音频的功放都需要 I2C 扩展芯片，
+ * 所以要先退出音频/显示，再关闭 I2C；反过来会触发 LCD deselect 断言。 */
 static void shutdown_cleanup(void)
 {
     exitCalled = true;
-    rg_display_clear(C_BLACK);                // Let the user know that something is happening
+    rg_display_clear(C_BLACK);                // 用过渡画面提示系统正在切换。
     rg_gui_draw_hourglass();                  // ...
-    rg_system_event(RG_EVENT_SHUTDOWN, NULL); // Allow apps to save their state if they want
-    rg_audio_deinit();                        // Disable sound ASAP to avoid audio garbage
-    // rg_system_save_time();                    // RTC might save to storage, do it before
-    rg_storage_deinit();                      // Unmount storage
-    rg_input_wait_for_key(RG_KEY_ALL, 0, -1); // Wait for all keys to be released (boot is sensitive to GPIO0,32,33)
-    rg_input_deinit();                        // Now we can shutdown input
-    rg_display_deinit();                      // Do this very last to reduce flicker time
+    rg_system_event(RG_EVENT_SHUTDOWN, NULL); // 通知应用，可在资源关闭前保存自身状态。
+    rg_audio_deinit();                        // 尽早关闭音频，避免切换时输出杂音。
+    // rg_system_save_time();                    // 若启用时间保存，应在卸载存储前执行。
+    rg_storage_deinit();                      // 提交并卸载文件系统。
+    rg_input_wait_for_key(RG_KEY_ALL, 0, -1); // 等待按键释放，避免 GPIO0 等引脚影响启动模式。
+    rg_input_deinit();                        // 按键释放后再停止输入任务。
+    rg_display_deinit();                      // 尽量靠后退出显示，缩短无画面的过渡时间。
     // 实战派的 LCD CS 在 I2C 扩展芯片上，显示驱动释放 CS 后才能关闭总线。
-    rg_i2c_deinit();                          // After every device that may use I2C
+    rg_i2c_deinit();                          // 所有依赖 I2C 的器件退出后才关闭总线。
 }
 
 void rg_system_shutdown(void)
@@ -915,6 +923,8 @@ void rg_system_exit(void)
     rg_system_switch_app(RG_APP_LAUNCHER, 0, 0, 0);
 }
 
+/* 先持久化下一应用的启动信息，再按资源依赖顺序重启；失败时进入明确的错误路径。
+ * partition 是 ESP32 应用分区标签，args 在 NES 场景中为 TF 上的 ROM 文件路径。 */
 void rg_system_switch_app(const char *partition, const char *name, const char *args, uint32_t flags)
 {
     RG_LOGI("Switching to app %s (%s)", partition ?: "-", name ?: "-");

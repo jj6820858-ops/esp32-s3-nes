@@ -17,10 +17,14 @@ static const audio_codec_gpio_if_t *gpio_if;
 static const audio_codec_if_t *codec_if;
 static const char *last_error;
 static int current_rate;
+/* tx_started 记录本层是否需要停止 I2S；codec_open 也覆盖 open 过程中失败的清理。
+ * codec_dev 可能在开关格式时启停通道，两者必须同步更新，避免重复 disable。 */
 static bool tx_started, codec_open;
 
 static bool driver_deinit(void)
 {
+    /* 先关功放，再按“设备 → codec/控制/数据接口 → I2S 通道”的依赖顺序释放。
+     * 每个资源都判空，既支持正常退出，也支持初始化在任意阶段失败后的回收。 */
     szpi_set_amplifier(false);
     if (speaker) {
         if (codec_open) { esp_codec_dev_close(speaker); tx_started = false; codec_open = false; }
@@ -40,6 +44,8 @@ static bool driver_deinit(void)
 
 static bool driver_set_rate(int rate)
 {
+    /* 更换采样率需要重新打开 codec；只有成功后才更新 current_rate。
+     * stereo + 16 bit 表示一个音频帧含左、右两个有符号 PCM 采样。 */
     /* 采样率描述每秒播放多少个采样，不是屏幕帧率。 */
     if (!speaker || rate <= 0) return false;
     if (rate == current_rate) return true;
@@ -66,6 +72,8 @@ static bool driver_init(int device, int rate)
     i2s_chan_config_t channel = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     channel.auto_clear = true;
     channel.dma_desc_num = 6; channel.dma_frame_num = 180;
+    /* MCLK 为 codec 提供参考时钟；BCLK 按位移出数据；WS 区分左右声道；
+     * DOUT 将 ESP32 的 PCM 送给 ES8311。这里仅播放，未申请 RX 通道。 */
     if (i2s_new_channel(&channel, &tx, NULL) != ESP_OK) goto fail;
     i2s_std_config_t cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate),
@@ -82,6 +90,7 @@ static bool driver_init(int device, int rate)
     gpio_if = audio_codec_new_gpio();
     if (!data_if || !ctrl_if || !gpio_if) goto fail;
     es8311_codec_cfg_t codec_cfg = {.ctrl_if=ctrl_if, .gpio_if=gpio_if,
+        /* pa_pin=-1 表示不交给 codec 用直连 GPIO 控制，功放实际由 PCA9557 IO1 控制。 */
         .codec_mode=ESP_CODEC_DEV_WORK_MODE_DAC, .pa_pin=-1, .use_mclk=true,
         .hw_gain={.pa_voltage=5.0, .codec_dac_voltage=3.3}};
     codec_if = es8311_codec_new(&codec_cfg);
@@ -98,6 +107,8 @@ fail:
 
 static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
 {
+    /* count 是双声道帧数，codec 接口接收字节数；先限制乘法结果在 int 范围内。
+     * 采样缓冲归调用方所有，本驱动只在写接口调用期间使用，不缓存其指针。 */
     /* APU 生成左右声道 16 位 PCM；codec 驱动负责提交给 I2S DMA。 */
     if (!speaker || count > INT_MAX / sizeof(*frames)) return false;
     int result = esp_codec_dev_write(speaker, (void *)frames, count * sizeof(*frames));

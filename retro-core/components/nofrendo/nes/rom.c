@@ -27,7 +27,7 @@
 
 static rom_t rom;
 
-/* Save battery-backed RAM */
+/* 卡带电池 RAM 存档：只保存 PRG-RAM；完整 CPU/PPU 现场由 state.c 即时存档处理。 */
 void rom_savesram(const char *filename)
 {
    if (!rom.battery || rom.prg_ram_banks < 1)
@@ -44,7 +44,7 @@ void rom_savesram(const char *filename)
    }
 }
 
-/* Load battery-backed RAM from disk */
+/* 从文件恢复卡带电池 RAM。 */
 void rom_loadsram(const char *filename)
 {
    if (!rom.battery || rom.prg_ram_banks < 1)
@@ -61,7 +61,10 @@ void rom_loadsram(const char *filename)
    }
 }
 
-/* Load a ROM from a memory buffer */
+/* 解析内存中的 ROM，建立数据指针与容量描述；不在这里执行游戏指令。
+ * iNES 常见布局：16 字节头 → 可选 512 字节 trainer → PRG 程序 → CHR 图案。
+ * mapper 是卡带映射电路编号，PRG/CHR 则分别供 CPU 和 PPU 侧使用。
+ */
 rom_t *rom_loadmem(uint8 *data, size_t size)
 {
    if (!data || size < 16)
@@ -85,19 +88,19 @@ rom_t *rom_loadmem(uint8 *data, size_t size)
       rom.type = ROM_TYPE_INES;
       rom.mapper_number = ((header->mapper_hinybble & 0xF0) | (header->rom_type >> 4));
       // https://wiki.nesdev.com/w/index.php/INES
-      // A general rule of thumb: if the last 4 bytes are not all zero, and the header is
-      // not marked for NES 2.0 format, an emulator should either mask off the upper 4 bits
-      // of the mapper number or simply refuse to load the ROM.
+      // 上游兼容旧文件头：保留区非零时忽略 mapper 的高 4 位，避免旧工具污染头部。
+      // 这是当前加载器的实际处理，不能据此认为它完整支持 NES 2.0 文件头。
       if (header->reserved2 != 0)
          rom.mapper_number &= 0x0F;
       rom.battery = (header->rom_type & ROM_FLAG_BATTERY);
       rom.fourscreen = (header->rom_type & ROM_FLAG_FOURSCREEN);
       rom.vertical = (header->rom_type & ROM_FLAG_VERTICAL);
       rom.trainer = (header->rom_type & ROM_FLAG_TRAINER) ? data + 0x10 : NULL;
+      // iNES 的 PRG 单位为 16KB；本核心统一按 8KB 计数，因此这里乘 2。
       rom.prg_rom_banks = header->prg_banks * 2;
       rom.chr_rom_banks = header->chr_banks;
-      rom.prg_ram_banks = 1; // 8KB. Not specified by iNES
-      rom.chr_ram_banks = 1; // 8KB. Not specified by iNES
+      rom.prg_ram_banks = 1; // 上游默认分配 8KB；此处未从 iNES 头读取 RAM 容量。
+      rom.chr_ram_banks = 1; // 同样预留 8KB CHR-RAM，供无 CHR-ROM 的卡带等情况使用。
 
       if (rom.fourscreen)
          rom.mirroring = PPU_MIRROR_FOUR;
@@ -108,6 +111,7 @@ rom_t *rom_loadmem(uint8 *data, size_t size)
 
       rom.checksum = CRC32(0, rom.data_ptr + data_offset, rom.data_len - data_offset);
 
+      // 按去掉文件头和 trainer 后的数据 CRC 查表，可修正 mapper、镜像方式和制式。
       const db_game_t *entry = games_database;
       while (entry->crc && entry->crc != rom.checksum)
          entry++;
@@ -159,6 +163,7 @@ rom_t *rom_loadmem(uint8 *data, size_t size)
          MESSAGE_INFO("ROM: Game not found in database.\n");
       }
 
+      // 上游这里只对过短文件打印错误，下面的 return 仍被注释；并非严格拒绝校验。
       size_t expected_size = data_offset + (rom.prg_rom_banks * ROM_PRG_BANK_SIZE) + (rom.chr_rom_banks * ROM_CHR_BANK_SIZE);
       if (size < expected_size)
       {
@@ -209,6 +214,8 @@ rom_t *rom_loadmem(uint8 *data, size_t size)
                (rom.trainer) ? 'T' : '-',
                (rom.fourscreen) ? '4' : '-');
 
+   // ROM 通常直接指向已读入的文件缓冲；可写 RAM 单独分配，缺失的 PRG 区另分配。
+   // malloc 的实际物理内存位置由平台堆配置决定，此处没有强制指定 PSRAM。
    rom.prg_ram = malloc(rom.prg_ram_banks * ROM_PRG_BANK_SIZE);
    rom.chr_ram = malloc(rom.chr_ram_banks * ROM_CHR_BANK_SIZE);
    if (!rom.prg_rom)
@@ -227,7 +234,7 @@ rom_t *rom_loadmem(uint8 *data, size_t size)
    return &rom;
 }
 
-/* Load a ROM from file */
+/* 文件入口：读取整份 ROM 到堆内存，再交给 rom_loadmem 解析；当前上限为 2MiB。 */
 rom_t *rom_loadfile(const char *filename)
 {
    uint8 *data = NULL;
@@ -262,7 +269,7 @@ rom_t *rom_loadfile(const char *filename)
       fclose(fp);
    }
 
-   // Just in case. Will ne a NO-OP if nothing is loaded
+   // 先释放之前的卡带上下文；没有已载入卡带时，rom_free 不释放任何数据。
    rom_free();
 
    if (rom_loadmem(data, size) == NULL)
@@ -280,12 +287,13 @@ rom_t *rom_loadfile(const char *filename)
          || strstr(filename, "(Australia)"))
          rom.system = SYS_NES_PAL;
    }
+   // 记录缓冲的所有权，退出游戏时由 rom_free 释放本次文件读取分配的内存。
    rom.free_data_ptr = true;
    rom.filename = strdup(filename);
    return &rom;
 }
 
-/* Free a ROM */
+/* 按所有权标志释放 ROM 数据，避免把指向同一文件缓冲的 PRG/CHR 切片重复释放。 */
 void rom_free(void)
 {
    if (rom.type != ROM_TYPE_INVALID)

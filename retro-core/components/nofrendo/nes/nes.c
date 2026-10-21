@@ -23,6 +23,9 @@
 
 #include "nes.h"
 
+/* 虚拟主机总调度：把 CPU 指令、PPU 扫描线、APU 计时和卡带 mapper 组合起来。
+ * 此文件只模拟 NES 侧的状态；ESP32 的屏幕与音频输出由上层回调衔接。
+ */
 static nes_t nes;
 
 nes_t *nes_getptr(void)
@@ -30,20 +33,21 @@ nes_t *nes_getptr(void)
     return &nes;
 }
 
-/* run emulation for one frame */
+/* 推进到当前帧结束；draw 只影响像素输出，不停止 CPU、mapper 和 APU 的执行。 */
 void nes_emulate(bool draw)
 {
     draw = draw && nes.vidbuf != NULL;
 
     while (nes.scanline < nes.scanlines_per_frame)
     {
-        // Running a little bit ahead seems to fix both Battletoads games...
+        // 上游采用先执行部分 CPU 周期再绘制扫描线的顺序，以兼容 Battletoads。
         int elapsed_cycles = nes6502_execute(86 - 12);
 
         ppu_renderline(nes.vidbuf, nes.scanline, draw);
 
         if (nes.scanline == 241)
         {
+            // 第 241 行进入垂直消隐附近，按 PPU 控制位向 CPU 请求 NMI。
             elapsed_cycles += nes6502_execute(6);
             if (nes.ppu->ctrl0 & PPU_CTRL0F_NMI)
                 nes6502_nmi();
@@ -54,12 +58,14 @@ void nes_emulate(bool draw)
 
         if (nes.mapper->hblank)
         {
-            // Mappers use various techniques to detect horizontal blank and we can't accommodate
-            // all of them unfortunately. But ~86 cycles seems to work fine for everything tested.
+            // 不同 mapper 检测行消隐的方式各异；上游在约 86 个 CPU 周期处调用。
+            // 这是兼容性折中，不能将该实现理解为逐 PPU 时钟的精确硬件仿真。
             elapsed_cycles += nes6502_execute(86 - elapsed_cycles);
             nes.mapper->hblank(&nes);
         }
 
+        // 补足本扫描线的 CPU 周期预算，并用实际消耗周期推进 APU 帧计数器。
+        // 指令不能执行半条，剩余周期差保留到下一条扫描线继续平衡。
         nes.cycles += nes.cycles_per_scanline;
 
         elapsed_cycles += nes6502_execute(nes.cycles - elapsed_cycles);
@@ -72,6 +78,7 @@ void nes_emulate(bool draw)
 
     nes.scanline = 0;
 
+    // 一帧结束才交付画面；随后混音，供上层提交 samples_per_frame 个音频帧。
     if (draw && nes.blit_func)
         nes.blit_func(nes.vidbuf);
 
@@ -85,19 +92,19 @@ uint8 *nes_setvidbuf(uint8 *vidbuf)
     return prevbuf;
 }
 
-/* This sets a timer to be fired every `period` cpu cycles. It is NOT accurate. */
+/* 配置每 period 个 CPU 周期触发的定时回调；该定时机制并不精确。 */
 void nes_settimer(nes_timer_t *func, int period)
 {
     nes.timer_func = func;
     nes.timer_period = period;
 }
 
-/* insert a cart into the NES */
+/* 连接解析好的卡带：查找 mapper，决定 PAL/NTSC 时序，随后复位主机。 */
 int nes_insertcart(rom_t *cart)
 {
     int status = 0;
 
-    /* rom file */
+    /* 保存卡带上下文，ROM 数据已由 rom_loadfile / rom_loadmem 准备。 */
     nes.cart = cart;
     if (NULL == nes.cart)
     {
@@ -105,7 +112,7 @@ int nes_insertcart(rom_t *cart)
         goto _fail;
     }
 
-    /* mapper */
+    /* mapper 决定 CPU/PPU 地址窗口映射到哪一段卡带内存。 */
     nes.mapper = mmc_init(nes.cart);
     if (NULL == nes.mapper)
     {
@@ -113,7 +120,7 @@ int nes_insertcart(rom_t *cart)
         goto _fail;
     }
 
-    /* Detect system type */
+    /* 自动模式采用 ROM 解析或游戏数据库提供的主机制式。 */
     if (nes.system == SYS_DETECT && nes.cart->system != SYS_UNKNOWN)
     {
         nes.system = nes.cart->system;
@@ -128,7 +135,7 @@ int nes_insertcart(rom_t *cart)
     else if (nes.system == SYS_FAMICOM)
         MESSAGE_INFO("NES: System type: FAMICOM  (NTSC-J)\n");
 
-    /* Apply proper system timings (See https://wiki.nesdev.com/w/index.php/Cycle_reference_chart) */
+    /* 按制式选择时钟、帧率与扫描线数（参考 https://wiki.nesdev.com/w/index.php/Cycle_reference_chart）。 */
     if (nes.system == SYS_NES_PAL)
     {
         nes.cpu_clock = NES_CPU_CLOCK_PAL;
@@ -182,7 +189,7 @@ int nes_loadfile(const char *filename)
     return nes_insertcart(rom_loadfile(filename));
 }
 
-/* Reset NES hardware */
+/* 硬复位额外清空卡带 RAM；软硬复位都会重置各模拟部件与扫描线调度状态。 */
 void nes_reset(bool hard_reset)
 {
     if (hard_reset)
@@ -221,7 +228,7 @@ void nes_shutdown(void)
     rom_free();
 }
 
-/* Initialize NES CPU, hardware, etc. */
+/* 初始化各部件并相互连接；CPU 访问的页表来自 mem，卡带稍后才插入。 */
 nes_t *nes_init(nes_type_t system, int sample_rate, bool stereo, const char *fds_bios)
 {
     memset(&nes, 0, sizeof(nes_t));

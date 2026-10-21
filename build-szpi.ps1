@@ -1,3 +1,5 @@
+# 学习入口：统一配置 IDF/Python 环境，再按 Action 选择构建、烧录或监视。
+# build-img 只生成完整镜像；flash 使用已有镜像，修改源码后应先重新构建。
 param(
     [string]$IdfPath = $env:IDF_PATH,
     [string]$IdfToolsPath = $env:IDF_TOOLS_PATH,
@@ -5,7 +7,8 @@ param(
     [string]$Port
 )
 $ErrorActionPreference = 'Stop'
-# This checkout is independent; the sibling runtime is only a local fallback.
+# 工程源码独立；相邻 bootload 目录只作为本机工具链的默认查找位置。
+# 换电脑可传入 IdfPath/IdfToolsPath，或预先设置同名环境变量。
 if (!$IdfPath) { $IdfPath = Join-Path $PSScriptRoot '..\bootload\tools\runtime\esp-idf' }
 if (!$IdfToolsPath) { $IdfToolsPath = Join-Path $PSScriptRoot '..\bootload\tools\runtime\idf-tools' }
 $IdfPath = (Resolve-Path -LiteralPath $IdfPath).Path
@@ -21,11 +24,13 @@ $env:PYTHONIOENCODING = 'utf-8'
 $toolBins = Get-ChildItem (Join-Path $IdfToolsPath 'tools') -Recurse -Directory |
     Where-Object { $_.Name -eq 'bin' -or $_.Parent.Name -eq 'ninja' } |
     Select-Object -ExpandProperty FullName
+# 环境变量仅影响当前脚本及子进程，不写入 Windows 的永久 PATH。
 $env:PATH = ((@((Join-Path $pythonEnv.FullName 'Scripts')) + $toolBins) -join ';') + ';' + $env:PATH
 $toolArgs = @('rg_tool.py','--target=szpi-esp32s3','--no-networking')
 if ($Port) { $toolArgs += "--port=$Port" }
 if ($Action -in @('monitor','flash') -and !$Port) { throw 'Specify -Port COMx.' }
 $toolArgs += @($Action,'launcher','retro-core')
+# 从仓库根目录执行，保证 rg_tool.py、镜像和相对路径指向同一个工程。
 Push-Location $PSScriptRoot
 try {
     if ($Action -eq 'flash') {

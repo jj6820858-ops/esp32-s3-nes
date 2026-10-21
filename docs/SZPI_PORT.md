@@ -66,7 +66,11 @@
   仓库根目录的占位表不能直接烧录；普通 flash 指向完整镜像，app-flash 指向
   实际 0x210000 的 retro-core 分区。
 
-没有改动 Nofrendo 的 CPU/PPU/APU/mapper、ROM 解析、存档格式或游戏规则。
+Nofrendo 的 CPU/PPU/APU/mapper、ROM 解析、存档格式及游戏规则的可执行逻辑保持原样。
+在 NES 调度、ROM 载入、手柄读取、bank 映射和存档入口补充中文学习注释，
+连同板级驱动、应用切换和本机工具脚本说明数据流、单位、时序与资源生命周期。
+已对比 C 可执行 token、Python AST 和 PowerShell 语法 token，确认本次只增加或
+翻译注释；原有版权及许可证原文保留。
 首次构建不打开网络功能。上游 retro-core 内的其他模拟器保持捆绑状态，未逐一验收。
 
 ## 验证记录

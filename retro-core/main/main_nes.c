@@ -2,6 +2,10 @@
 
 #include <nofrendo.h>
 
+/* NES 与 Retro-Go 的衔接层：核心处理虚拟主机，框架处理菜单、文件和板级输出。
+ * 学习主线：nes_main → input_update → nes_emulate → blit_screen / rg_audio_submit。
+ * 画面使用 8 位色号索引；updates 的色板将色号转换为屏幕需要的 RGB565。
+ */
 static int overscan = true;
 static int autocrop = 0;
 static int palette = 0;
@@ -17,7 +21,7 @@ static const char *SETTING_AUTOCROP = "autocrop";
 static const char *SETTING_OVERSCAN = "overscan";
 static const char *SETTING_PALETTE = "palette";
 static const char *SETTING_SPRITELIMIT = "spritelimit";
-// --- MAIN
+// 菜单通过下列回调访问模拟器，避免菜单直接操作 CPU、PPU 等内部状态。
 
 
 static void event_handler(int event, void *arg)
@@ -43,6 +47,7 @@ static bool save_state_handler(const char *filename)
 
 static bool load_state_handler(const char *filename)
 {
+    // 读档失败后硬复位，避免继续使用可能只恢复了一部分的主机状态。
     if (state_load(filename) != 0)
     {
         nes_reset(true);
@@ -59,6 +64,7 @@ static bool reset_handler(bool hard)
 
 static void build_palette(int n)
 {
+    // 两块缓冲共用相同的显示配色；交换字节后符合 RG_PIXEL_PAL565_BE 格式。
     uint16_t *pal = nofrendo_buildpalette(n, 16);
     for (int i = 0; i < 256; i++)
     {
@@ -150,12 +156,17 @@ static rg_gui_event_t palette_update_cb(rg_gui_option_t *option, rg_gui_event_t 
 
 static void blit_screen(uint8 *bmp)
 {
+    /* NES 核心在完成可见帧后回调此函数，框架显示任务再消费 currentUpdate。
+     * 非阻塞查询上一帧的显示队列，记录压力供下一轮的跳帧判断使用。
+     * bmp 为 NULL 时表示菜单请求重绘已有画面，不重新执行一帧游戏。
+     */
     slowFrame = bmp && !rg_display_sync(false);
-    // A rolling average should be used for autocrop == 1, it causes jitter in some games...
+    // 按背景计数逐帧裁剪会使部分游戏抖动；上游建议用均值，下面的方案仍未启用。
     // int crop_h = (autocrop == 2) || (autocrop == 1 && nes->ppu->left_bg_counter > 210) ? 8 : 0;
     int crop_v = (overscan) ? nes->overscan : 0;
     int crop_h = (autocrop) ? 8 : 0;
     // crop_h = (autocrop == 2) || (autocrop == 1 && nes->ppu->left_bg_counter > 210) ? 8 : 0;
+    // 仅改变可见窗口；行跨度仍保留核心两侧各 8 像素的额外绘制空间。
     currentUpdate->width = NES_SCREEN_WIDTH - crop_h * 2;
     currentUpdate->height = NES_SCREEN_HEIGHT - crop_v * 2;
     currentUpdate->offset = crop_v * currentUpdate->stride + crop_h + 8;
@@ -200,12 +211,14 @@ void nes_main(void)
         .options = &options_handler,
     };
 
+    // 重新绑定 NES 的菜单回调，并取得启动器传入的 ROM 路径、存档槽和音频配置。
     app = rg_system_reinit(AUDIO_SAMPLE_RATE, &handlers, NULL);
 
     overscan = rg_settings_get_number(NS_APP, SETTING_OVERSCAN, 1);
     autocrop = rg_settings_get_number(NS_APP, SETTING_AUTOCROP, 0);
     palette = rg_settings_get_number(NS_APP, SETTING_PALETTE, NES_PALETTE_PVM);
 
+    // 两块画面缓冲轮换：核心生成下一帧时，显示任务可继续处理刚提交的画面。
     updates[0] = rg_surface_create(NES_SCREEN_PITCH, NES_SCREEN_HEIGHT, RG_PIXEL_PAL565_BE, MEM_FAST);
     updates[1] = rg_surface_create(NES_SCREEN_PITCH, NES_SCREEN_HEIGHT, RG_PIXEL_PAL565_BE, MEM_FAST);
     currentUpdate = updates[0];
@@ -219,6 +232,7 @@ void nes_main(void)
 
     if (rg_extension_match(app->romPath, "zip"))
     {
+        // ZIP 先解压到内存，再走与普通文件相同的 ROM 解析、卡带插入流程。
         void *data;
         size_t size;
         if (!rg_storage_unzip_file(app->romPath, NULL, &data, &size, RG_FILE_ALIGN_8KB))
@@ -240,6 +254,7 @@ void nes_main(void)
     else if (ret < 0)
         RG_PANIC("Unsupported ROM.");
 
+    // 绑定输出回调；模拟器核心无需知道 SPI 引脚或 ST7789 初始化时序。
     nes->blit_func = blit_screen;
 
     nsfPlayer = nes->cart->type == ROM_TYPE_NSF;
@@ -248,8 +263,8 @@ void nes_main(void)
 
     build_palette(palette);
 
-    // This is necessary for successful state restoration
-    // I have not yet investigated why that is...
+    // 上游要求先推进两帧再恢复即时存档；原作者尚未说明该顺序的具体原因。
+    // 这里保留原有行为，false 只关闭图像输出，CPU 和音频状态仍会推进。
     nes_emulate(false);
     nes_emulate(false);
 
@@ -278,10 +293,12 @@ void nes_main(void)
                 rg_gui_options_menu();
         }
 
+        // 每轮仍推进一帧虚拟主机；skipFrames 决定是否为这一帧生成显示像素。
         int64_t startTime = rg_system_timer();
         bool drawFrame = !skipFrames && !nsfPlayer;
         int buttons = 0;
 
+        // 框架按键位与 NES 串行手柄位定义不同，先显式转换后再传给核心。
         if (joystick & RG_KEY_START)  buttons |= NES_PAD_START;
         if (joystick & RG_KEY_SELECT) buttons |= NES_PAD_SELECT;
         if (joystick & RG_KEY_UP)     buttons |= NES_PAD_UP;
@@ -293,6 +310,7 @@ void nes_main(void)
 
         if (drawFrame)
         {
+            // 布尔比较得到 0 或 1，从而在两块缓冲间切换；跳帧时保留原指针。
             currentUpdate = updates[currentUpdate == updates[0]];
             nes_setvidbuf(currentUpdate->data);
         }
@@ -306,21 +324,24 @@ void nes_main(void)
             RG_LOGI("NES running: frames=%u pad=0x%04x",diagnostic_frames,(unsigned)joystick);
 #endif
 
-        // Tick before submitting audio/syncing
+        // 先统计本轮模拟耗时，再提交音频；音频提交的等待不计入这段统计。
         rg_system_tick(rg_system_timer() - startTime);
 
-        // ④ APU 音频经 I2S → ES8311 → 喇叭；音频提交也参与控制运行节奏。
+        // ④ APU 每帧生成 PCM；本板经 I2S → ES8311 → 功放 → 喇叭输出。
+        // samples_per_frame 是音频帧数，提交到驱动时的等待也参与运行节奏控制。
         rg_audio_submit((void*)nes->apu->buffer, nes->apu->samples_per_frame);
 
         if (skipFrames == 0)
         {
+            // 以模拟制式的刷新率和倍速计算预算；固定跳帧优先，其次才按耗时调节。
+            // 跳过的是图像生成与提交，游戏逻辑、手柄和每帧音频仍继续更新。
             int frameTime = 1000000 / (nes->refresh_rate * app->speed);
             int elapsed = rg_system_timer() - startTime;
             if (nsfPlayer)
                 skipFrames = 10, nsf_draw_overlay();
             else if (app->frameskip > 0)
                 skipFrames = app->frameskip;
-            else if (elapsed > frameTime + 1500) // Allow some jitter
+            else if (elapsed > frameTime + 1500) // 允许少量耗时波动，避免频繁切换跳帧。
                 skipFrames = 1; // (elapsed / frameTime)
             else if (drawFrame && slowFrame)
                 skipFrames = 1;

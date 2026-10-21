@@ -10,6 +10,8 @@
 static esp_lcd_panel_io_handle_t szpi_lcd_io;
 static esp_lcd_panel_handle_t szpi_lcd_panel;
 static uint16_t *szpi_lcd_dma;
+/* 单块 DMA 暂存区供显示任务反复使用；模拟器画面可在其他内存中，
+ * 发送前由公共显示层转换、拷贝到此处，不能在 DMA 尚未完成时覆盖。 */
 
 static void lcd_sync(void)
 {
@@ -19,6 +21,7 @@ static void lcd_sync(void)
 
 static inline uint16_t *lcd_get_buffer(size_t length)
 {
+    /* length 和 pixels 的单位是像素；分配量、传输量再乘 2 得到 RGB565 字节数。 */
     RG_ASSERT(length <= LCD_BUFFER_LENGTH, "LCD staging buffer too small");
     return szpi_lcd_dma;
 }
@@ -35,6 +38,8 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t pixels)
 
 static void lcd_set_window(int left, int top, int width, int height)
 {
+    /* 0x2A/0x2B 指定列、行范围，结束坐标包含在窗口内，所以要减 1。
+     * 随后的 0x2C 开始显存写入；分块像素传输继续使用这个窗口。 */
     RG_ASSERT(left >= 0 && top >= 0 && width > 0 && height > 0 &&
         left + width <= RG_SCREEN_WIDTH && top + height <= RG_SCREEN_HEIGHT,
         "LCD window out of bounds");
@@ -57,6 +62,8 @@ static void lcd_set_backlight(float percent)
 
 static void lcd_init(void)
 {
+    /* 初始化跨两条总线：I2C 保持 LCD 不选中 → 配置 SPI/引脚复用 →
+     * 建立空闲时钟 → I2C 选中 LCD → 有效复位和控制器初始化 → 分配 DMA 缓存。 */
     RG_ASSERT(rg_i2c_read_byte(0x19, 0x01) & 1, "LCD CS must remain high during SPI setup");
     const ledc_timer_config_t timer = {
         .speed_mode=LEDC_LOW_SPEED_MODE, .duty_resolution=LEDC_TIMER_10_BIT,
@@ -76,6 +83,7 @@ static void lcd_init(void)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(RG_SCREEN_HOST, &bus, SPI_DMA_CH_AUTO));
     const esp_lcd_panel_io_spi_config_t io = {
+        /* cs_gpio_num=-1：SPI 驱动不切换 CS，实际片选由 PCA9557 维持低电平。 */
         .dc_gpio_num=RG_GPIO_LCD_DC, .cs_gpio_num=-1, .pclk_hz=RG_SCREEN_SPEED,
         .lcd_cmd_bits=8, .lcd_param_bits=8, .spi_mode=RG_SCREEN_SPI_MODE,
         .trans_queue_depth=2,
@@ -112,6 +120,8 @@ static void lcd_init(void)
 
 static void lcd_deinit(void)
 {
+    /* 先等 DMA 停止，再关显示并释放句柄/缓存，防止传输访问已释放内存。
+     * 释放 CS 仍要写 PCA9557，因此系统关闭时必须先反初始化显示，再关闭 I2C。 */
     lcd_sync();
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(szpi_lcd_panel, false));
     ESP_ERROR_CHECK(esp_lcd_panel_del(szpi_lcd_panel));

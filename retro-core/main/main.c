@@ -1,5 +1,9 @@
 #include "shared.h"
 
+/* 多模拟器固件的入口：先建立 Retro-Go 运行环境，再按配置命名空间分发。
+ * 启动器选择 NES 游戏后，启动参数会使 configNs 成为 "nes"，进入 nes_main。
+ * 同一个 retro-core 固件也包含其他主机核心；此处不负责读取或解释游戏 ROM。
+ */
 
 void app_main(void)
 {

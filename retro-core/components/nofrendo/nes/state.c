@@ -24,28 +24,29 @@
 #include "nes.h"
 
 /**
- * Save file format:
+ * 即时存档格式：保存模拟主机的执行现场，使恢复后能从保存位置继续运行。
+ * 这与只保存游戏电池 RAM 的 rom_savesram 不同，也不是 ROM 游戏文件本身。
  *
- * The file has an 8 byte header followed by a series of blocks.
- * Integer values are big endian.
+ * 文件由 8 字节头和后续若干数据块组成；整数使用大端字节序。
  *
- *    Header format:
- *       magic (4 bytes), always "SNSS"
- *       block count (4 bytes), int32be
+ *    文件头：
+ *       标识（4 字节），固定为 "SNSS"
+ *       数据块数量（4 字节），int32be
  *
- *    Block format:
- *       name (4 bytes)
- *       block version (4 bytes), int32be
- *       block length (4 bytes), int32be
- *       data ("block length" bytes)
+ *    数据块：
+ *       块名（4 字节）
+ *       块版本（4 字节），int32be
+ *       块长度（4 字节），int32be
+ *       数据（长度由块长度字段指定）
  *
- * In actuality, most blocks have a fixed size and all are at version 1.
- * - BASR: 6449 bytes
- * - INFO: 256 bytes
- * - SOUN: 22 bytes
- * - SRAM: prg-ram + 1 bytes
- * - VRAM: chr-ram bytes
- * - MPRD: 152 bytes
+ * 当前写入块的版本均为 1；实际大小以 state_save 写出的长度字段为准。
+ * 块名和内容（不含 12 字节块头）：
+ * - BASR：CPU 寄存器、内存和 PPU 状态，6449 字节
+ * - INFO：信息区，256 字节
+ * - SOUN：声音寄存器，22 字节
+ * - SRAM：PRG-RAM 加 1 字节使能标志
+ * - VRAM：CHR-RAM 数据
+ * - MPRD：卡带映射状态，当前代码写入 0x218 字节
  */
 
 typedef struct
@@ -118,6 +119,7 @@ static bool memory_zone_dirty(const void *ptr, size_t size)
 
 int state_save(const char* fn)
 {
+   // 分块保存 CPU 寄存器、CPU RAM、PPU 内存/寄存器、声音寄存器与卡带状态。
    uint32 numberOfBlocks = 0;
    uint8 buffer[600];
    nes_t *machine = nes_getptr();
@@ -154,7 +156,7 @@ int state_save(const char* fn)
    _fwrite(machine->ppu->oam, 0x100);
    _fwrite(machine->ppu->nametab, 0x1000);
 
-   /* Mask off priority color bits */
+   /* 色板仅保存 NES 色号，去掉本模拟器内部用于绘制优先级的标记位。 */
    for (int i = 0; i < 32; i++)
       buffer[i] = machine->ppu->palette[i] & 0x3F;
 
@@ -227,8 +229,8 @@ int state_save(const char* fn)
    {
       MESSAGE_INFO("  - Saving SRAM block\n");
 
-      // Byte 0 = SRAM enabled (unused)
-      // Length is always $2001
+      // 第 0 字节为 SRAM 使能标志（当前未使用），后续为实际 PRG-RAM 数据。
+      // 上游这里的长度字段固定写为 $2001。
       _fwrite("SRAM\x00\x00\x00\x01\x00\x00\x20\x01\x01", 13);
       _fwrite(machine->cart->prg_ram, 0x2000 * machine->cart->prg_ram_banks);
       numberOfBlocks++;
@@ -239,6 +241,7 @@ int state_save(const char* fn)
 
    if (machine->mapper->number > 0)
    {
+      // 同一份 ROM 在不同时刻的 bank 映射可能不同，因此也要保存页映射与私有寄存器。
       MESSAGE_INFO("  - Saving mapper block\n");
 
       memset(buffer, 0, sizeof(buffer));
@@ -272,7 +275,7 @@ int state_save(const char* fn)
 
    /****************************************************/
 
-   // Update number of blocks
+   // RAM 全零时可省略相应块，因此写完后回到文件头填入实际块数。
    fseek(file, 4, SEEK_SET);
    numberOfBlocks = swap32(numberOfBlocks);
    _fwrite(&numberOfBlocks, 4);
@@ -292,6 +295,7 @@ _error:
 
 int state_load(const char* fn)
 {
+   // 按块名分发恢复过程；每块的长度字段确定下一块位置，不依赖固定块顺序。
    uint8 buffer[600];
 
    nes_t *machine = nes_getptr();
@@ -350,7 +354,7 @@ int state_load(const char* fn)
          _fread(machine->ppu->nametab, 0x1000);
          _fread(machine->ppu->palette, 0x20);
 
-         /* TODO: argh, this is to handle nofrendo's filthy sprite priority method */
+         /* 补回模拟器内部的背景透明标记，以兼容当前精灵优先级绘制方式。 */
          for (int i = 0; i < 8; i++)
             machine->ppu->palette[i << 2] = machine->ppu->palette[0] | 0x80; // BG_TRANS;
 
@@ -360,7 +364,7 @@ int state_load(const char* fn)
          machine->ppu->oam_addr = buffer[0x6];
          machine->ppu->tile_xofs = buffer[0x7];
 
-         /* do some extra handling */
+         /* 除复制寄存器值，还需重建 PPU 的写入状态、名称表映射和内部派生状态。 */
          machine->ppu->flipflop = 0;
          machine->ppu->strikeflag = false;
 
@@ -404,7 +408,7 @@ int state_load(const char* fn)
             continue;
          }
 
-         _fread(buffer, 1); // SRAM enabled (always true)
+         _fread(buffer, 1); // 读过 SRAM 使能标志，当前保存时始终为真。
          _fread(machine->cart->prg_ram, blockLength - 1);
       }
 
@@ -413,6 +417,7 @@ int state_load(const char* fn)
 
       else if (memcmp(buffer, "MPRD", 4) == 0)
       {
+         // 先恢复 CPU/PPU 页映射，再交给具体 mapper 恢复其私有寄存器。
          MESSAGE_INFO("  - Found mapper block (%u bytes)\n", blockLength);
 
          _fread(buffer, MIN(blockLength, sizeof(buffer)));
@@ -440,6 +445,7 @@ int state_load(const char* fn)
 
       else if (memcmp(buffer, "SOUN", 4) == 0)
       {
+         // 复位 APU 后重放寄存器写入；当前格式保存的是这些寄存器，而非全部混音内部量。
          MESSAGE_INFO("  - Found sound block (%u bytes)\n", blockLength);
 
          _fread(buffer, 0x16);
@@ -459,7 +465,7 @@ int state_load(const char* fn)
 
          _fread(buffer, 0x100);
 
-         // We don't currently do anything with it, it's just to help report bugs to me :)
+         // 当前读取 INFO 后不使用其内容，保留上游格式兼容性。
       }
 
 
@@ -471,7 +477,7 @@ int state_load(const char* fn)
       }
    }
 
-   /* close file, we're done */
+   /* 全部块处理完成后关闭文件。 */
    fclose(file);
 
    MESSAGE_INFO("state_load: Game restored\n");
