@@ -38,9 +38,15 @@ bool szpi_fat_probe(const uint8_t b[512], szpi_partition_t *p)
     uint32_t fat=read16(b+22); if (!fat) fat=read32(b+36);
     uint32_t roots=read16(b+17), root_sectors=(roots*32+511)/512;
     uint64_t overhead=(uint64_t)reserved+fats*(uint64_t)fat+root_sectors;
-    if (!fat || !total || total>p->sector_count || overhead>=total) return false;
+    if (!fat || !total || overhead>=total) return false;
     uint32_t clusters=(total-overhead)/cluster;
     unsigned bits=clusters<4085 ? 12 : clusters<65525 ? 16 : 32;
+    /* 部分已有 FAT32 卡的 BPB 总长度比 MBR 多记 1 个扇区。
+     * 仅当该扇区属于不足一个簇的无用尾部时接受：完整数据簇、FAT 表
+     * 仍须全部位于分区内。绝不扩大 sector_count，底层读写边界不变。 */
+    if (total>p->sector_count &&
+        (bits!=32 || total-p->sector_count!=1 ||
+         overhead+(uint64_t)clusters*cluster>p->sector_count)) return false;
     /* 不只相信分区类型或标签：核对真正的 FAT 几何结构和容量。 */
     if ((bits==32 && (roots || read16(b+22) || read16(b+42) || read32(b+44)<2 ||
                      read32(b+44)>=(uint64_t)clusters+2)) ||

@@ -3,7 +3,7 @@
 日期：2026-10-21（Asia/Shanghai）。独立工程基于 Retro-Go 上游提交
 `4ced120669750ca7228fd0414211430c1d923166`，分支 `codex/szpi-nes`。
 
-## 已完成的实机验证
+## 首轮已完成的实机验证（8GB 卡）
 
 - COM5（CH340K/UART0）烧录，460800 波特率；esptool 校验通过。
 - ESP32-S3 rev 0.2，16 MB Flash，8 MB Octal PSRAM / 80 MHz，PSRAM 内存测试通过。
@@ -36,6 +36,34 @@
    `I2C driver terminated`、`init=0`。现改为显示退出完成后再关闭 I2C，并完成
    游戏与菜单切换回归。TF 中旧 crash.log 保留，文件存在不代表新固件仍然报错。
 
+## 64GB 卡的 FAT32 兼容修复
+
+之后接入的 SD64G 卡容量为 124735488 个 512 字节扇区。电脑 G: 明确识别为
+FAT32、32 KiB 簇；原固件卡初始化成功，但第 3 分区显示 FAT0，错误码 0x105。
+尚未到 FatFs 挂载阶段，屏幕的“Make sure the card is FAT32”是统一错误提示。
+
+只读取得主、备 FAT32 引导扇区，内容一致。MBR 第 3 分区起点 2097152、长度
+122638335；BPB 卷长度却为 122638336，多记了 1 个扇区。每簇 64 扇区，保留区
+32 扇区，1 份 FAT、每份 14971 扇区，完整簇区末端为相对扇区 122638299
+（不包含末端），仍在原分区内；差异仅落在未分配给任何簇的尾部。
+
+`szpi_fat_probe()` 现在仅对 FAT32 多记 1 个未使用尾部扇区的情况兼容。
+不修改卡的 MBR/BPB，不扩大 `sector_count`，每次底层读写仍受原分区边界限制。
+超过 1 个扇区、切断完整簇以及 FAT16 越界仍拒绝。真实卡几何测试先复现失败，
+修复后通过，其他触摸、分区和测试 ROM 主机检查也通过。
+
+COM5 烧录并校验后，launcher 和 retro-core 均选中第 3 个 FAT32 分区；两次文件
+读写探测均 PASS，MBR/3 个分区启动扇区指纹均保持不变。NES 菜单识别到新增的
+游戏，《Böbl 1.1》从 `/sd/roms/nes/Bobl-1.1.nes` 加载 Mapper 2，日志连续达到
+900/1200 帧，运行统计约 60 模拟帧、30 显示提交/秒，无该 SD 挂载错误。
+这不代表已验证三款游戏的完整流程或通关。
+
+失败、修复后的启动以及游戏日志分别为 `logs/board-sd-newcard-error.log`、
+`logs/board-sd64-fixed.log`、`logs/board-sd64-game.log`；烧录记录为
+`logs/flash-sd64-fix.log`。修复前完整镜像保存在忽略的
+`backups/before-sd64-fix-20261021.img`，SHA-256 为
+`94694b1614eec2fab4beedc2b0ec2b29488729675c32549cf625fd563df4c8be`。
+
 ## VS Code 与构建
 
 请打开 `SZPI-NES.code-workspace`。IDF 工程目录为 `retro-core`，仓库根目录不是
@@ -52,18 +80,18 @@ IDF 工程。工作区设置 COM5、UART、115200 监视、完整镜像打包命
 | 产物 | 大小（bytes） | 位置 |
 |---|---:|---|
 | Bootloader | 21616 | 0x000000 |
-| launcher.bin | 620240 | 0x010000，2 MiB 分区 |
-| retro-core.bin | 1147664 | 0x210000，2 MiB 分区 |
+| launcher.bin | 620288 | 0x010000，2 MiB 分区 |
+| retro-core.bin | 1147728 | 0x210000，2 MiB 分区 |
 | szpi-nes_0.1.0_szpi-esp32s3.img | 4260096 | 从 0x0 写入 |
 
 本次烧录镜像 SHA-256：
 
 ```text
-94694b1614eec2fab4beedc2b0ec2b29488729675c32549cf625fd563df4c8be
+5490239cffb407c4a443fbf756d75c7acc708097ddef341e7be284f3a0fdf9a1
 ```
 
 构建包含时间及 Git 元数据，重新构建后校验值可能变化。Retro-Go 显示版本 0.1.0，
-IDF app description 沿用 Git 版本策略，本次构建为 `3c4aa6b-dirty`。
+IDF app description 沿用 Git 版本策略，本次构建为 `ae8243f-dirty`。
 
 ## 主机检查和证据
 
