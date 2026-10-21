@@ -1,4 +1,53 @@
-> 实战派 ESP32-S3 独立移植工程：请先阅读 [README_SZPI.md](README_SZPI.md)。以下保留上游原始说明。
+# ESP32-S3 NES 触摸掌机与中文源码学习
+
+在实战派 ESP32-S3-WROOM-1-N16R8 开发板上运行 NES 游戏：ST7789 显示、双点触摸
+虚拟手柄、TF 卡读游戏与存档、ES8311 扬声器输出。基于
+[ducalex/retro-go](https://github.com/ducalex/retro-go)，保留 Nofrendo 模拟器核心，
+新增本板硬件适配和中文学习注释；CPU、PPU、APU 和 Mapper 沿用上游实现。
+
+## 从这里开始
+
+| 入口 | 内容 |
+|---|---|
+| [使用与构建](README_SZPI.md) | 引脚、TF 目录、触摸按键、编译和烧录 |
+| [中文学习路线](docs/中文学习路线.md) | 按源码理解启动、显示、存储、音频和模拟器 |
+| [实机验证记录](VALIDATION_SZPI.md) | 已完成的验证、故障原因、固件校验值和验证范围 |
+| [移植来源与改动](docs/SZPI_PORT.md) | 上游来源、改动文件和许可证说明 |
+| [VS Code 工作区](SZPI-NES.code-workspace) | 本机 ESP-IDF 主工程入口，打开后进入 `retro-core` |
+
+![虚拟手柄布局](docs/szpi-controls-preview.png)
+
+上图是实际 C 绘图代码生成的布局预览；不是实机游戏截图。
+
+## 当前实测状态
+
+- 16 MB Flash、8 MB Octal PSRAM；菜单、触摸、测试游戏画面与扬声器已完成实物验证。
+- 自编测试 ROM 支持方向移动、A 发声、B 变色；已验证保存/读取和菜单切换。
+- 支持已有多分区 TF 卡，选择最大的有效 FAT32 数据分区，游戏放在 `/roms/nes/`。
+- 已处理一张 64 GB 卡 BPB 比 MBR 多记 1 个未使用尾部扇区的情况；不修改卡的
+  分区表或启动扇区，不扩大底层读写范围。该卡读写探测及《Böbl 1.1》加载运行通过。
+- 其他模拟器、其他游戏完整流程和长时间稳定性仍以实际测试为准。
+
+## 在 Windows 上使用
+
+打开 `SZPI-NES.code-workspace`，不要把仓库根目录当成 ESP-IDF CMake 工程。
+工作区中的 ESP-IDF 工程是 `retro-core`，完整镜像同时包含 launcher 和 retro-core。
+
+```powershell
+# 已配置 ESP-IDF 5.2.3 及工具路径后，在仓库根目录运行
+.\build-szpi.ps1
+.\build-szpi.ps1 -Action flash -Port COM5
+```
+
+当前工作区的 IDF 路径指向本机现有安装；换电脑时按 [构建说明](README_SZPI.md)
+设置 `IdfPath`、`IdfToolsPath`，并同步调整工作区设置。无需改动模拟器代码。
+TF 卡中使用自己的或作者允许下载的 `.nes` 游戏。本仓库只包含自编
+`SZPI-Controls.nes`，不包含下载的第三方游戏、原机 Flash 备份或本机运行日志。
+
+下方保留上游 Retro-Go 的功能、安装、致谢和许可说明；其他设备的安装步骤请与
+本板 [专用说明](README_SZPI.md) 区分。
+
+---
 
 # Table of contents
 - [Description](#description)
