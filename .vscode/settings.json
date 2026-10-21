@@ -1,0 +1,29 @@
+{
+  "files.encoding": "utf8",
+  "files.associations": {
+    "*.h": "c"
+  },
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/retro-core/build/compile_commands.json",
+  "idf.port": "COM5",
+  "idf.adapterTargetName": "esp32s3",
+  "cmake.configureOnOpen": false,
+  "cmake.ignoreCMakeListsMissing": true,
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "idf.currentSetup": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\esp-idf",
+  "terminal.integrated.stickyScroll.enabled": false,
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_PATH": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\esp-idf",
+    "IDF_TOOLS_PATH": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\idf-tools",
+    "IDF_PYTHON_ENV_PATH": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\idf-tools\\python_env\\idf5.2_py3.12_env",
+    "PYTHON": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\idf-tools\\python_env\\idf5.2_py3.12_env\\Scripts\\python.exe",
+    "OPENOCD_SCRIPTS": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\idf-tools\\tools\\openocd-esp32\\v0.12.0-esp32-20240821\\openocd-esp32\\share\\openocd\\scripts",
+    "ESP_ROM_ELF_DIR": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\idf-tools\\tools\\esp-rom-elfs\\20230320\\",
+    "IDF_CCACHE_ENABLE": "1",
+    "PYTHONUTF8": "1",
+    "PYTHONIOENCODING": "utf-8"
+  },
+  "idf.extensionActivationMode": "never"
+}

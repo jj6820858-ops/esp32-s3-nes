@@ -217,6 +217,9 @@ static void retro_loop(void)
 
     while (true)
     {
+#ifdef RG_TARGET_SZPI_ESP32S3
+        szpi_console_poll(); /* 调试命令由主循环执行，保证切换应用时序。 */
+#endif
         // At the moment the HTTP server has absolute priority because it may change UI elements.
         // It's also risky to let the user do file accesses at the same time (thread safety, SPI, etc)...
         if (gui.http_lock)

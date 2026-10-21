@@ -1,5 +1,6 @@
 """Validate the actual Retro-Go image, its partitions, and embedded app files."""
 import hashlib
+import json
 from pathlib import Path
 import struct
 import zlib
@@ -43,3 +44,15 @@ for label, (kind, subtype, offset, size) in parts.items():
         assert setting in sdkconfig, f'{label}: missing {setting}'
 print(f'{path.name}: {len(data)} bytes; CRC, partition MD5, app payloads and board configuration passed')
 print('SHA256:', hashlib.sha256(data).hexdigest())
+
+# 检查 IDF 扩展实际使用的元数据，防止把 dummy 分区表或 core 写到 launcher。
+flash = json.loads((root / 'retro-core/build/flasher_args.json').read_text(encoding='utf-8'))
+assert flash['app']['offset'] == hex(parts['retro-core'][2]), 'Wrong IDF app flash offset'
+assert len(flash['flash_files']) == 1 and '0x0' in flash['flash_files'], 'IDF must flash full image'
+assert (root / 'retro-core/build' / flash['flash_files']['0x0']).resolve() == path
+workspace = json.loads((root / 'SZPI-NES.code-workspace').read_text(encoding='utf-8'))
+project = root / workspace['folders'][0]['path']
+assert (project / 'CMakeLists.txt').is_file() and (project / 'sdkconfig').is_file()
+assert workspace['settings']['idf.flashType'] == 'UART'
+assert 'build-szpi.ps1' in workspace['settings']['idf.postBuildTask']
+print('VS Code: real IDF project, full-image flash and correct core partition passed')

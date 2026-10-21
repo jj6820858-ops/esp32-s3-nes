@@ -109,6 +109,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 
 #ifdef RG_TARGET_SZPI_ESP32S3
     state |= szpi_read_touch();
+    state |= szpi_console_read_keys();
 #endif
 
 #if defined(RG_GAMEPAD_ADC_MAP)

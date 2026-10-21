@@ -190,6 +190,7 @@ static void options_handler(rg_gui_option_t *dest)
 
 void nes_main(void)
 {
+    /* 学习入口：保留上游模拟器，以下只负责 ROM、画面、声音和手柄的衔接。 */
     const rg_handlers_t handlers = {
         .loadState = &load_state_handler,
         .saveState = &save_state_handler,
@@ -209,6 +210,7 @@ void nes_main(void)
     updates[1] = rg_surface_create(NES_SCREEN_PITCH, NES_SCREEN_HEIGHT, RG_PIXEL_PAL565_BE, MEM_FAST);
     currentUpdate = updates[0];
 
+    /* 初始化红白机 CPU/PPU/APU；SYS_DETECT 根据游戏信息选择制式。 */
     nes = nes_init(SYS_DETECT, app->sampleRate, true, RG_BASE_PATH_BIOS "/fds_bios.bin");
     if (!nes)
         RG_PANIC("Init failed.");
@@ -225,6 +227,7 @@ void nes_main(void)
     }
     else
     {
+        /* 从 TF 卡读取 .nes 到运行内存，再按卡带 mapper 建立地址映射。 */
         ret = nes_loadfile(app->romPath);
     }
 
@@ -261,6 +264,10 @@ void nes_main(void)
 
     while (true)
     {
+#ifdef RG_TARGET_SZPI_ESP32S3
+        szpi_console_poll();
+#endif
+        /* ① 获取实际按键状态：本板把双点触摸转换为 RG_KEY_*。 */
         uint32_t joystick = rg_input_read_gamepad();
 
         if (joystick & (RG_KEY_MENU|RG_KEY_OPTION))
@@ -290,13 +297,19 @@ void nes_main(void)
             nes_setvidbuf(currentUpdate->data);
         }
 
+        /* ② 交给模拟的 1 号手柄；③ 推进一帧，CPU 执行游戏、PPU 生成画面。 */
         input_update(0, buttons);
         nes_emulate(drawFrame);
+#ifdef RG_TARGET_SZPI_ESP32S3
+        static unsigned diagnostic_frames;
+        if (++diagnostic_frames%300==0)
+            RG_LOGI("NES running: frames=%u pad=0x%04x",diagnostic_frames,(unsigned)joystick);
+#endif
 
         // Tick before submitting audio/syncing
         rg_system_tick(rg_system_timer() - startTime);
 
-        // Audio is used to pace emulation :)
+        // ④ APU 音频经 I2S → ES8311 → 喇叭；音频提交也参与控制运行节奏。
         rg_audio_submit((void*)nes->apu->buffer, nes->apu->samples_per_frame);
 
         if (skipFrames == 0)

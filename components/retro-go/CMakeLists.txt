@@ -14,7 +14,7 @@ endif()
 
 # IDF's early dependency scan does not expose custom cache variables. Keep the
 # dependency visible in both passes; only the SZPI target selects its driver.
-string(APPEND COMPONENT_REQUIRES " esp_codec_dev driver sdmmc")
+string(APPEND COMPONENT_REQUIRES " esp_codec_dev driver sdmmc esp_lcd")
 register_component()
 
 # Small size is preferred because of the small cache and most things here aren't performance sensitive!

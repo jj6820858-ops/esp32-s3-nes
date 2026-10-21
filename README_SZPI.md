@@ -21,7 +21,7 @@ NES 核心、游戏菜单、存档、显示缩放及多应用启动方式，仅�
 | BOOT 用户键 | GPIO0，低有效，打开 Retro-Go 菜单 |
 
 游戏工程关闭摄像头，不初始化 AI、麦克风或联网服务。PSRAM 用于模拟器数据、
-ROM 及图像缓冲；SPI 传输沿用上游内部 DMA staging buffer。
+ROM 及图像缓冲；显示适配层使用内部 DMA staging buffer 接到 IDF ST7789 驱动。
 
 ## 编译
 
@@ -59,12 +59,16 @@ python -m esptool --chip esp32s3 -p COMx -b 460800 write_flash 0x0 szpi-nes_0.1.
 
 ## 准备游戏
 
-1. 使用 FAT32 TF 卡，把本目录 `sdcard/` 内的内容复制到卡根目录。
-2. 将自己准备的 `.nes` 游戏放到卡的 **`/roms/nes/`**，例如 `/roms/nes/game.nes`。
-3. 断电插卡，再上电；左右方向切换到 NES 分类，上下选游戏，A 确认。
-4. 按 START 开始。M / 板上 BOOT 打开游戏菜单，可保存、读取存档和回到 launcher。
+1. 可以直接保留已有 TF 卡分区。ESP32 会读取 MBR 和 FAT BPB，选择最大的有效
+   FAT32 分区；这张 K230 旧卡对应之前电脑里的 G:，不会选前面的 BIN / SDCARD。
+2. 首次挂载成功会自动新建 `roms/nes`，并写入自编的 `SZPI-Controls.nes` 测试 ROM。
+   同名文件已经存在时不覆盖，也不会格式化或重新分区。
+3. 其他 `.nes` 游戏放到该数据分区的 **`/roms/nes/`**，例如 `/roms/nes/game.nes`。
+4. 断电插卡，再上电；左右方向切换到 NES 分类，上下选游戏，A 确认。
+5. 普通游戏按 START 开始。测试 ROM 直接运行；方向移动图案，A 发声，B 变色。
+   M / 板上 BOOT 打开游戏菜单，可保存、读取存档和回到 launcher。
 
-固件不含魂斗罗、超级玛丽等商业 ROM。具体游戏能否运行还取决于上游 Nofrendo
+固件不含魂斗罗、超级玛丽等商业 ROM，提供自己的控制测试 ROM。具体游戏能否运行还取决于上游 Nofrendo
 对该 ROM 的 mapper 支持，PSRAM 容量不是唯一条件。SD 挂载失败时不会自动格式化卡。
 
 ## 虚拟手柄
@@ -90,11 +94,29 @@ python -m esptool --chip esp32s3 -p COMx -b 460800 write_flash 0x0 szpi-nes_0.1.
 python tests/check_szpi_image.py
 ```
 
-这会在 Windows 主机编译并运行真实 C 触摸解码代码，检查双点同时按下、释放、
-坐标转换、越界和叠加层不修改控制区外像素。
+这会在 Windows 主机运行三组真实 C 测试：触摸解码与绘制边界、多分区识别及扇区
+映射、Nofrendo 执行自编测试 ROM（方向、图像变化及 APU 非零采样）。
 
 构建和主机测试只验证软件。上板还要确认：PSRAM 检测、LCD 方向/颜色、TF 挂载、
 触摸方向与双点组合、游戏帧率、ES8311 声音、存档后重启恢复。
-本次创建工程不自动执行刷机，也不声称已完成上述硬件验收。
+本机已通过 COM5 烧录并实测 TF 第 3 分区读写、8 MB PSRAM 及测试 ROM 运行。
+屏幕、实体触摸、扬声器的实际表现与串口初始化结果分开记录，详见
+[验证记录](VALIDATION_SZPI.md)。
 
 板级改动和来源详见 [docs/SZPI_PORT.md](docs/SZPI_PORT.md)。
+
+## VS Code 与中文学习注释
+
+打开根目录的 **`SZPI-NES.code-workspace`**，它把 `retro-core` 作为真正的 IDF
+工程目录。仓库根目录由 `rg_tool.py` 管理两个应用，本身没有 `CMakeLists.txt`，
+不能直接作为 IDF 扩展的工程目录。
+
+工作区已设置 ESP32-S3、COM5、UART 烧录和 115200 串口。ESP-IDF 编译完成后的
+命令会更新 launcher + retro-core 完整镜像；普通烧录写完整镜像到 0x0，
+单独 app-flash 写 retro-core 到 0x210000。`Ctrl+Shift+B` 也可以更新完整镜像。
+IntelliSense 使用 retro-core 的真实编译命令。
+
+中文注释集中在板级 target、TF 多分区驱动、音频驱动以及 NES 主循环。
+按 [中文学习路线](docs/中文学习路线.md) 阅读，可从实际引脚一路跟到 CPU/PPU/APU。
+调试串口是 COM5、115200；`?` 查看命令，`g` 启动自编测试 ROM，`c` 只读 TF
+根目录的 `crash.log`，便于排查屏幕上出现的 System Panic 提示。

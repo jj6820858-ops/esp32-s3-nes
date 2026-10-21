@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "NES：编译完整镜像",
+      "type": "process", "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build-szpi.ps1"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true }, "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "NES：烧录到 COM5",
+      "type": "process", "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build-szpi.ps1", "-Action", "flash", "-Port", "COM5"],
+      "options": { "cwd": "${workspaceFolder}" }, "problemMatcher": []
+    },
+    {
+      "label": "NES：串口监视 COM5",
+      "type": "process", "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build-szpi.ps1", "-Action", "monitor", "-Port", "COM5"],
+      "options": { "cwd": "${workspaceFolder}" }, "problemMatcher": []
+    },
+    {
+      "label": "NES：运行主机测试",
+      "type": "process", "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/test-szpi.ps1"],
+      "options": { "cwd": "${workspaceFolder}" }, "problemMatcher": ["$gcc"]
+    }
+  ]
+}

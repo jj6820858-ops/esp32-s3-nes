@@ -41,6 +41,8 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length);
 
 #if RG_SCREEN_DRIVER == 0 || RG_SCREEN_DRIVER == 1 /* ILI9341/ST7789 */
 #include "drivers/display/ili9341.h"
+#elif RG_SCREEN_DRIVER == 2 && defined(RG_TARGET_SZPI_ESP32S3)
+#include "drivers/display/szpi_st7789.h"
 #elif RG_SCREEN_DRIVER == 99
 #include "drivers/display/sdl2.h"
 #else

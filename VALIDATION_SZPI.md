@@ -1,53 +1,86 @@
-# SZPI NES 0.1.0 验证记录
+# SZPI NES 0.1.0 实机验证记录
 
-日期：2026-10-21（Asia/Shanghai）。
+日期：2026-10-21（Asia/Shanghai）。独立工程基于 Retro-Go 上游提交
+`4ced120669750ca7228fd0414211430c1d923166`，分支 `codex/szpi-nes`。
 
-## 已完成
+## 已完成的实机验证
 
-- 在独立目录克隆 Retro-Go，上游提交固定为
-  `4ced120669750ca7228fd0414211430c1d923166`，本地分支 `codex/szpi-nes`。
-- 使用本机 ESP-IDF 5.2.3、Xtensa GCC 13.2.0 编译 launcher、retro-core 和 Bootloader。
-- `build-szpi.ps1` 最终成功，完整日志：`logs/build-szpi.log`（忽略的本机产物）。
-- `test-szpi.ps1` 通过，使用 w64devkit GCC 15.1.0 运行真实 C 代码，覆盖双触点
-  方向+A、释放、无触点、坏帧、坐标转换、斜向、相反方向抵消、边界和绘制缓冲哨兵。
-- `tests/check_szpi_image.py` 通过：镜像总大小、Retro-Go footer CRC、分区表 MD5、
-  分区不重叠、每个应用与打包文件逐字节相同、应用头目标 ESP32-S3。
-- 检查两个应用生成的 sdkconfig：16 MB Flash、Octal PSRAM、240 MHz CPU。
-- 排除原样保留的第三方 codec 目录后，板级改动的 `git diff --cached --check` 通过；
-  codec 原始源码含部分行尾空格，本次没有改写第三方文件。实际 C 绘图代码渲染的
-  控制布局已检查。
+- COM5（CH340K/UART0）烧录，460800 波特率；esptool 校验通过。
+- ESP32-S3 rev 0.2，16 MB Flash，8 MB Octal PSRAM / 80 MHz，PSRAM 内存测试通过。
+- TF 卡以 SDMMC 1-bit / 20 MHz 初始化，读出 3 个已有主分区，选择第 3 个 FAT32
+  分区：起始 LBA 2097152，长度 13631487 扇区，约 6655 MiB。
+- 在选定分区创建临时文件，写入、同步、重开、读取比较并删除，结果 PASS。
+  MBR 与 3 个分区启动扇区写入前后指纹一致（4 扇区）。这不是全卡旧文件逐字节校验；
+  其他分区的写隔离由每次磁盘读写的范围检查保证。没有格式化或重新分区。
+- 自编 `SZPI-Controls.nes` 已写入 TF，Mapper 0，PRG 16 KiB、CHR 8 KiB。
+- 用户实物确认：菜单、虚拟按键、游戏画面、触摸、A 键声音均正常。
+- 用户确认 440 Hz / 2 秒直接 PCM 测试音可听到；功放读回 0x06（PA 开，LCD CS 低），
+  DAC 静音寄存器 0x31 读回 0x00。修正 I2S 启停状态后不再出现重复 disable 报错。
+- 游戏串口统计约 60 个模拟帧/秒、30 个显示提交/秒，默认 frameskip=1；这不是
+  示波器测量的屏幕刷新率，也不代表所有 ROM 都达到相同速度。
+- 通过原菜单保存存档 0，日志 `state_save: Game saved!`；再加载，日志
+  `state_load: Game restored`。文件位于 `/sd/retro-go/saves/nes/`。
+- NES → launcher → NES 连续两轮通过，无 LCD/I2C 退出断言；最终停留在测试游戏。
 
-| 产物 | 大小（bytes） | 镜像内位置 / 分区 |
+## 黑屏及退出断言的定位
+
+已从备份完整恢复原 16 MB Flash 做对照。用户断电重上电后确认原 OTA/语音界面
+正常，随后重新烧录 NES 工程。原业务源码未修改。
+
+1. 原移植在 SPI 初始化前拉低 LCD CS，可能使引脚复用/空闲电平变化被屏幕采样。
+   现在启动保持 CS=1，SPI 先完成一次事务建立 mode 2 空闲电平，然后选中屏幕、
+   发送有效软件复位，再通过 IDF ST7789 驱动初始化。用户确认黑屏消失。
+2. 退出时原流程先关闭 I2C，再关闭显示。本板释放 CS 需要写 PCA9557，故出现
+   `szpi_set_lcd_selected(false)` / `LCD chip deselect failed`。
+   已从 TF 的 `/crash.log` 读回确认：`Panic context: lcd_deinit`，前面有
+   `I2C driver terminated`、`init=0`。现改为显示退出完成后再关闭 I2C，并完成
+   游戏与菜单切换回归。TF 中旧 crash.log 保留，文件存在不代表新固件仍然报错。
+
+## VS Code 与构建
+
+请打开 `SZPI-NES.code-workspace`。IDF 工程目录为 `retro-core`，仓库根目录不是
+IDF 工程。工作区设置 COM5、UART、115200 监视、完整镜像打包命令。
+
+- ESP-IDF 5.2.3 / Xtensa GCC 13.2.0 完整编译通过。
+- 实际执行 `idf.py -C retro-core build` 成功。
+- 实际执行 `idf.py -C retro-core -p COM5 -b 460800 flash` 成功，校验通过。
+- `flasher_args.json` 普通 flash 仅写完整镜像到 0x0；app-flash 对应 0x210000，
+  不会把占位表或模拟器写入 launcher 地址。已通过自动元数据检查。
+- VS Code 原生按钮没有通过 GUI 自动点击；上述验证覆盖其对应工程目录、构建及
+  烧录命令。工作区使用本机现有 IDF 安装路径，换电脑需要修改路径。
+
+| 产物 | 大小（bytes） | 位置 |
 |---|---:|---|
 | Bootloader | 21616 | 0x000000 |
-| launcher.bin | 589568 | 0x010000，分区 2097152 bytes |
-| retro-core.bin | 1116352 | 0x210000，分区 2097152 bytes |
-| szpi-nes_0.1.0_szpi-esp32s3.img | 4260096 | 完整镜像，从 0x0 写入 |
+| launcher.bin | 620240 | 0x010000，2 MiB 分区 |
+| retro-core.bin | 1147664 | 0x210000，2 MiB 分区 |
+| szpi-nes_0.1.0_szpi-esp32s3.img | 4260096 | 从 0x0 写入 |
 
-完整镜像 SHA-256：
+本次烧录镜像 SHA-256：
 
 ```text
-2eb196e00bb08623303856e17fbd4faa80318cd0063767ef422b5fb2cd811704
+94694b1614eec2fab4beedc2b0ec2b29488729675c32549cf625fd563df4c8be
 ```
 
-镜像包含时间及 Git 构建元数据，重新构建后 SHA-256 可能不同。
-IDF app description 沿用上游 Git 版本策略，当前为 `4ced120-dirty`；Retro-Go 应用
-显示版本和完整镜像版本为 `0.1.0`。
+构建包含时间及 Git 元数据，重新构建后校验值可能变化。Retro-Go 显示版本 0.1.0，
+IDF app description 沿用 Git 版本策略，本次构建为 `3c4aa6b-dirty`。
 
-上游构建存在部分未使用值、旧 API 相关警告；本次没有把成功构建描述为零警告。
-首轮失败原因为 IDF 提前依赖扫描未发现 codec 依赖，已调整依赖声明，最终构建通过。
+## 主机检查和证据
 
-## 实物验收待完成
+- `test-szpi.ps1`：真实 C 触摸解码/叠加层、MBR/BPB/分区范围检查、实际 Nofrendo
+  核心执行测试 ROM 的移动、非零音频、B 键调色板、帧图案检查，均通过。
+- `tests/check_szpi_image.py`：镜像 CRC、分区表 MD5、不重叠、应用逐字节一致、
+  ESP32-S3 目标及 PSRAM 配置、VS Code 工程目录和烧录地址，均通过。
+- `tools/test_board_menu.py`：保存、加载及两轮应用切换实机回归。
+- 日志均在忽略的 `logs/` 中：`tf-crash-readback.log`、`board-audio-clock.log`、
+  `board-speaker-tone-repeat.log`、`board-game-audio-final.log`、
+  `board-save-load-roundtrip.log`、`flash-lcd-cs-idf.log`、`test-final.log`。
+- 原 16 MB 固件备份位于忽略的 `backups/before-nes-20261021.bin`，SHA-256：
+  `14650427d1024c527258c02c85aaf5afe1e83cb4ad41bf4b6490445f3e38d6ff`。
+  备份可能含原设备配置，不进入 Git。
 
-本次没有执行串口烧录、读写实体 TF 卡或启动商业游戏 ROM。
-没有测得该板上的 FPS、音频质量、触摸延迟，也没有证明所有游戏 mapper 都兼容。
+## 验证范围
 
-上板顺序：
-
-1. 按 README_SZPI.md 写入完整镜像，观察 PSRAM 容量日志。
-2. 确认 ST7789 方向、颜色、背光正常，触摸 M/O 和方向键位置正确。
-3. FAT32 TF 卡中放 `/roms/nes/*.nes`，确认 SDMMC 1-bit 挂载和 NES 列表。
-4. 测试方向+A、方向+B 同按与完全松开，检查无粘键。
-5. 检查游戏声音、暂停/恢复、保存/读取、返回 launcher 及重启后的存档。
-
-原 bootload OTA/AI 工程业务文件未因本次移植而修改。
+尚未测试商业游戏、其他 mapper、其他模拟器、长时间运行、耳机输出或音频频响。
+没有测量触摸延迟或 SPI/I2S 实际波形。主机双触点解码测试通过，但不同游戏的
+复杂双点组合仍需实际游玩确认。代码沿用部分上游旧 API，保留其相关编译警告。

@@ -3,3 +3,4 @@ set(COMPONENTS "main retro-go nofrendo gnuboy pce-go gw-emulator handy smsplus s
 set(RG_ENABLE_NETWORKING 0)
 include(../base.cmake)
 project(retro-core)
+include(../cmake/szpi_vscode_flash.cmake)

@@ -4,6 +4,7 @@
 
 typedef struct { int x, y, w, h; uint32_t key; const char *label; } touch_button_t;
 static const touch_button_t buttons[] = {
+    /* 坐标单位是横屏像素；触摸命中这些区域后生成 Retro-Go 原有按键。 */
     {40,144,32,32,RG_KEY_UP,"U"}, {8,176,32,32,RG_KEY_LEFT,"L"},
     {72,176,32,32,RG_KEY_RIGHT,"R"}, {40,208,32,32,RG_KEY_DOWN,"D"},
     {216,192,44,40,RG_KEY_B,"B"}, {268,160,44,40,RG_KEY_A,"A"},
@@ -13,6 +14,7 @@ static const touch_button_t buttons[] = {
 
 uint32_t szpi_touch_keys_at(int x, int y)
 {
+    /* 九宫格方向盘：四角可以同时产生两个方向，中间是无动作区。 */
     if (x < 0 || x >= 320 || y < 0 || y >= 240) return 0;
     if (x >= 8 && x < 104 && y >= 144) {
         uint32_t key = 0;
@@ -41,7 +43,7 @@ uint32_t szpi_touch_decode(const uint8_t *packet, size_t length)
         int raw_x = ((p[0] & 0x0f) << 8) | p[1];
         int raw_y = ((p[2] & 0x0f) << 8) | p[3];
         if (raw_x > 240 || raw_y >= 320) continue;
-        // Match the existing BSP: mirror raw X around 240, then swap X/Y.
+        // 与原板级驱动保持一致：原始 X 镜像后再交换 X/Y，得到横屏坐标。
         int y = 240 - raw_x;
         if (y == 240) y = 239;
         keys |= szpi_touch_keys_at(raw_y, y);
@@ -53,8 +55,8 @@ uint32_t szpi_touch_decode(const uint8_t *packet, size_t length)
     return keys;
 }
 
-// Small, local 3x5 lettering. All overlay pixels are composed into DMA staging
-// buffers, never into the emulator's original frame or palette.
+// 触摸按键仅叠加到 LCD 发送缓存，不能修改模拟器原始画面和调色板。
+// 因此游戏存档截图中不会混入虚拟手柄。
 static unsigned glyph(char c)
 {
     switch (c) {

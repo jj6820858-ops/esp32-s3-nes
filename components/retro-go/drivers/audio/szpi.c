@@ -6,7 +6,8 @@
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
 
-// esp_codec_dev 1.3.6 API, matching the existing SZPI audio wiring.
+// 控制通路：I2C 配置 ES8311；数据通路：I2S 把 PCM 采样送到 ES8311。
+// 下面通过 Retro-Go 原有音频驱动接口接入，无需改变 NES APU。
 // https://components.espressif.com/components/espressif/esp_codec_dev/versions/1.3.6
 static i2s_chan_handle_t tx;
 static esp_codec_dev_handle_t speaker;
@@ -16,25 +17,41 @@ static const audio_codec_gpio_if_t *gpio_if;
 static const audio_codec_if_t *codec_if;
 static const char *last_error;
 static int current_rate;
+static bool tx_started, codec_open;
 
 static bool driver_deinit(void)
 {
     szpi_set_amplifier(false);
-    if (speaker) { esp_codec_dev_close(speaker); esp_codec_dev_delete(speaker); speaker = NULL; }
+    if (speaker) {
+        if (codec_open) { esp_codec_dev_close(speaker); tx_started = false; codec_open = false; }
+        esp_codec_dev_delete(speaker); speaker = NULL;
+    }
     if (codec_if) { audio_codec_delete_codec_if(codec_if); codec_if = NULL; }
     if (ctrl_if) { audio_codec_delete_ctrl_if(ctrl_if); ctrl_if = NULL; }
     if (gpio_if) { audio_codec_delete_gpio_if(gpio_if); gpio_if = NULL; }
     if (data_if) { audio_codec_delete_data_if(data_if); data_if = NULL; }
-    if (tx) { i2s_channel_disable(tx); i2s_del_channel(tx); tx = NULL; }
+    if (tx) {
+        if (tx_started) i2s_channel_disable(tx);
+        i2s_del_channel(tx); tx = NULL; tx_started = false;
+    }
+    current_rate = 0;
     return true;
 }
 
 static bool driver_set_rate(int rate)
 {
+    /* 采样率描述每秒播放多少个采样，不是屏幕帧率。 */
     if (!speaker || rate <= 0) return false;
     if (rate == current_rate) return true;
     esp_codec_dev_sample_info_t fs = {.sample_rate = rate, .bits_per_sample = 16, .channel = 2};
-    if (current_rate) esp_codec_dev_close(speaker);
+    if (codec_open) { esp_codec_dev_close(speaker); codec_open = false; tx_started = false; }
+    /* codec_dev 1.3.6 的 set_fmt 会先停止通道，调用前必须处于 RUNNING 状态。
+     * 先开启 I2S 也让 MCLK 在 ES8311 配置期间持续存在。 */
+    if (!tx_started) {
+        if (i2s_channel_enable(tx) != ESP_OK) return false;
+        tx_started = true;
+    }
+    codec_open = true; // 失败时也需要 close 清理由 codec_dev 开启的通道。
     if (esp_codec_dev_open(speaker, &fs) != ESP_CODEC_DEV_OK) return false;
     current_rate = rate;
     return true;
@@ -42,6 +59,7 @@ static bool driver_set_rate(int rate)
 
 static bool driver_init(int device, int rate)
 {
+    /* I2S0 的时钟、左右声道同步和数据引脚均与本板原接线一致。 */
     (void)device;
     last_error = NULL;
     current_rate = 0;
@@ -55,6 +73,8 @@ static bool driver_init(int device, int rate)
         .gpio_cfg = {.mclk=38, .bclk=14, .ws=13, .dout=45, .din=I2S_GPIO_UNUSED},
     };
     if (i2s_channel_init_std_mode(tx, &cfg) != ESP_OK) goto fail;
+    if (i2s_channel_enable(tx) != ESP_OK) goto fail;
+    tx_started = true;
     audio_codec_i2s_cfg_t data_cfg = {.port=0, .tx_handle=tx};
     audio_codec_i2c_cfg_t ctrl_cfg = {.port=0, .addr=ES8311_CODEC_DEFAULT_ADDR};
     data_if = audio_codec_new_i2s_data(&data_cfg);
@@ -78,8 +98,15 @@ fail:
 
 static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
 {
-    return speaker && count <= INT_MAX / sizeof(*frames) &&
-        esp_codec_dev_write(speaker, (void *)frames, count * sizeof(*frames)) == ESP_CODEC_DEV_OK;
+    /* APU 生成左右声道 16 位 PCM；codec 驱动负责提交给 I2S DMA。 */
+    if (!speaker || count > INT_MAX / sizeof(*frames)) return false;
+    int result = esp_codec_dev_write(speaker, (void *)frames, count * sizeof(*frames));
+    if (result != ESP_CODEC_DEV_OK) {
+        static bool reported;
+        if (!reported) RG_LOGE("ES8311 PCM write failed: %d", result);
+        reported = true;
+    }
+    return result == ESP_CODEC_DEV_OK;
 }
 
 static bool driver_set_volume(int volume)
@@ -89,10 +116,13 @@ static bool driver_set_volume(int volume)
 
 static bool driver_set_mute(bool mute)
 {
+    /* 关闭时先禁用功放，恢复时先解除 DAC 静音，再打开功放。 */
     if (!speaker) return false;
     if (mute) szpi_set_amplifier(false);
     if (esp_codec_dev_set_out_mute(speaker, mute) != ESP_CODEC_DEV_OK) return false;
-    return mute || szpi_set_amplifier(true);
+    bool ready = mute || szpi_set_amplifier(true);
+    RG_LOGI("ES8311 mute=%d PA port=0x%02x", mute, rg_i2c_read_byte(0x19, 0x01));
+    return ready;
 }
 
 static const char *driver_error(void) { return last_error; }

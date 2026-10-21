@@ -120,9 +120,16 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     args.append(f"-DRG_BUILD_RELEASE={1 if is_release else 0}")
     args.append(f"-DRG_ENABLE_PROFILING={1 if with_profiling else 0}")
     args.append(f"-DRG_ENABLE_NETWORKING={0 if no_networking else 1}")
-    with open("partitions.csv", "w") as f:
-        f.write("# This table isn't used, it's just needed to avoid esp-idf build failures.\n")
-        f.write("dummy, app, ota_0, 65536, 3145728\n")
+    # 内容相同时不触碰时间戳，避免每次构建都触发 IDF 的 CMake 重新配置。
+    dummy_table = ("# This table isn't used, it's just needed to avoid esp-idf build failures.\n"
+                   "dummy, app, ota_0, 65536, 3145728\n")
+    existing_table = None
+    if os.path.exists("partitions.csv"):
+        with open("partitions.csv") as f:
+            existing_table = f.read()
+    if existing_table != dummy_table:
+        with open("partitions.csv", "w") as f:
+            f.write(dummy_table)
     run(args, cwd=os.path.join(os.getcwd(), app))
     print("Done.\n")
 

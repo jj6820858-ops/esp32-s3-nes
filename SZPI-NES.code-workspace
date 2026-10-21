@@ -1,0 +1,58 @@
+{
+  "folders": [ { "name": "NES 主工程（ESP-IDF）", "path": "retro-core" } ],
+  "settings": {
+    "files.encoding": "utf8",
+    "files.associations": { "*.h": "c" },
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "idf.extensionActivationMode": "always",
+    "idf.currentSetup": "D:\\Users\\lenovo\\Documents\\ChatGPT\\bootload\\tools\\runtime\\esp-idf",
+    "idf.buildPath": "${workspaceFolder}/build",
+    "idf.sdkconfigFilePath": "${workspaceFolder}/sdkconfig",
+    "idf.sdkconfigDefaults": [ "${workspaceFolder}/../components/retro-go/targets/szpi-esp32s3/sdkconfig" ],
+    "idf.port": "COM5",
+    "idf.monitorPort": "COM5",
+    "idf.flashType": "UART",
+    "idf.flashBaudRate": "460800",
+    "idf.monitorBaudRate": "115200",
+    "idf.monitorNoReset": true,
+    "idf.partitionToUse": "all",
+    "idf.postBuildTask": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"../build-szpi.ps1\"",
+    "idf.cmakeCompilerArgs": [
+      "-G", "Ninja", "-DPYTHON_DEPS_CHECKED=1", "-DESP_PLATFORM=1",
+      "-DRG_PROJECT_APP=retro-core", "-DRG_PROJECT_VER=0.1.0",
+      "-DRG_BUILD_TARGET=RG_TARGET_SZPI_ESP32S3", "-DRG_BUILD_RELEASE=0",
+      "-DRG_ENABLE_PROFILING=0", "-DRG_ENABLE_NETWORKING=0"
+    ],
+    "idf.customExtraVars": {
+      "IDF_PATH": "D:/Users/lenovo/Documents/ChatGPT/bootload/tools/runtime/esp-idf",
+      "IDF_TOOLS_PATH": "D:/Users/lenovo/Documents/ChatGPT/bootload/tools/runtime/idf-tools",
+      "IDF_PYTHON_ENV_PATH": "D:/Users/lenovo/Documents/ChatGPT/bootload/tools/runtime/idf-tools/python_env/idf5.2_py3.12_env",
+      "PYTHON": "D:/Users/lenovo/Documents/ChatGPT/bootload/tools/runtime/idf-tools/python_env/idf5.2_py3.12_env/Scripts/python.exe",
+      "IDF_TARGET": "esp32s3", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"
+    },
+    "cmake.configureOnOpen": false,
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "terminal.integrated.stickyScroll.enabled": false
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "NES：更新完整镜像", "type": "process", "command": "powershell.exe",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/../build-szpi.ps1"],
+        "options": { "cwd": "${workspaceFolder}/.." }, "problemMatcher": ["$gcc"],
+        "group": { "kind": "build", "isDefault": true }
+      },
+      {
+        "label": "NES：烧录完整镜像 COM5", "type": "process", "command": "powershell.exe",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/../build-szpi.ps1", "-Action", "flash", "-Port", "COM5"],
+        "options": { "cwd": "${workspaceFolder}/.." }, "problemMatcher": []
+      },
+      {
+        "label": "NES：串口监视 COM5", "type": "process", "command": "powershell.exe",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/../build-szpi.ps1", "-Action", "monitor", "-Port", "COM5"],
+        "options": { "cwd": "${workspaceFolder}/.." }, "problemMatcher": []
+      }
+    ]
+  }
+}

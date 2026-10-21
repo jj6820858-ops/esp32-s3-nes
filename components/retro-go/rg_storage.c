@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef RG_TARGET_SZPI_ESP32S3
+#include "szpi_storage.h"
+#endif
 
 #if defined(RG_STORAGE_SDSPI_HOST)
 #include <driver/sdspi_host.h>
@@ -68,7 +71,11 @@ void rg_storage_init(void)
     RG_ASSERT(!disk_mounted, "Storage already initialized!");
     int error_code = -1;
 
-#if defined(RG_STORAGE_SDSPI_HOST)
+#if defined(RG_TARGET_SZPI_ESP32S3)
+    /* 本板识别已有多分区卡，仅挂载最大的有效 FAT32 数据分区。 */
+    error_code=szpi_storage_mount(RG_STORAGE_ROOT,&card_handle);
+
+#elif defined(RG_STORAGE_SDSPI_HOST)
 
     RG_LOGI("Looking for SD Card using SDSPI...");
 
@@ -205,7 +212,11 @@ void rg_storage_deinit(void)
 #if defined(RG_STORAGE_SDSPI_HOST) || defined(RG_STORAGE_SDMMC_HOST)
     if (card_handle != NULL)
     {
+#ifdef RG_TARGET_SZPI_ESP32S3
+        esp_err_t err = szpi_storage_unmount(RG_STORAGE_ROOT);
+#else
         esp_err_t err = esp_vfs_fat_sdcard_unmount(RG_STORAGE_ROOT, card_handle);
+#endif
         card_handle = NULL; // NULL it regardless of success, nothing we can do on errors...
         error_code = (int)err;
     }

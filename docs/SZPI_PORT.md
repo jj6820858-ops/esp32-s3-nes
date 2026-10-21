@@ -34,11 +34,16 @@
 
 `components/retro-go/targets/szpi-esp32s3/`：
 
-- `config.h`：实际 GPIO、ST7789 命令、SPI mode 2、反相背光、SDMMC 及 BOOT。
+- `config.h`：实际 GPIO、IDF ST7789 驱动选择、SPI mode 2、反相背光、SDMMC 及 BOOT。
 - `sdkconfig`：16 MB Flash、Octal PSRAM 80 MHz、240 MHz CPU、UTF-8 FAT 文件名。
 - `env.py`：仍使用上游的 launcher + retro-core 双应用镜像，两个 2 MB 应用分区。
 - `szpi_board.c`：启动 I2C、PCA9557、LCD 片选、关闭摄像头、触摸读取及 PA 控制。
 - `szpi_touch.c`：两个 FT6336 触点转换成 Retro-Go 按键；固定位置的半透明提示。
+- `szpi_partition.c`：解析已有 MBR 和 FAT BPB，检查范围与重叠，选择最大的 FAT32。
+- `szpi_storage.c`：SDMMC 扇区偏移映射及 FatFs 挂载；创建测试文件验证真实 TF 读写。
+  没有格式化或重新分区路径，每次读写均限制在选定区域内。
+- `szpi_demo.c`：自编 6502 测试 ROM 的固件副本，TF 中无同名文件时创建。
+- `szpi_console.c`：复用输入任务读取 UART0 调试键，应用切换由主循环执行。
 
 `drivers/audio/szpi.c` 将原有 `rg_audio_driver_t` 接口接到 ES8311，通过 IDF 新 I2S
 驱动和 esp_codec_dev 输出立体声 PCM；硬件 DAC 为单声道，最终播放以本板为准。
@@ -50,10 +55,16 @@
 - `rg_audio.c` 登记 ES8311 sink。
 - `rg_display.c` 只在本 target 的传输 staging buffer 叠加触摸提示。
   原始 NES 帧和调色板不受修改；触摸提示不会写入游戏截图。
-- 显示驱动增加可配置 SPI mode；SDMMC 对本板启用内部上拉。
+- 本板使用 `drivers/display/szpi_st7789.h` 薄适配层接到 IDF ST7789 驱动，
+  由 esp_lcd 配置 GPIO39 / IO MUX，像素传输等待 DMA 完成后再复用缓冲。
+  CS 始终在 SPI 空闲电平稳定后才拉低；退出时先释放 CS，再关闭 I2C。
+  SDMMC 对本板启用内部上拉。
 - 启动阶段跳过 GPIO=-1 的 LCD 片选预设，由 PCA9557 执行实际片选。
 - `rg_tool.py` 在 Windows 使用当前 Python、参数数组及 `shell=False` 调用 IDF，
-  避免命中其他 Python 或错误解析带空格路径。
+  避免命中其他 Python 或错误解析带空格路径；占位分区表不变时保留其时间戳。
+- `SZPI-NES.code-workspace` 与 `cmake/szpi_vscode_flash.cmake` 连接 IDF 扩展。
+  仓库根目录的占位表不能直接烧录；普通 flash 指向完整镜像，app-flash 指向
+  实际 0x210000 的 retro-core 分区。
 
 没有改动 Nofrendo 的 CPU/PPU/APU/mapper、ROM 解析、存档格式或游戏规则。
 首次构建不打开网络功能。上游 retro-core 内的其他模拟器保持捆绑状态，未逐一验收。
@@ -61,4 +72,6 @@
 ## 验证记录
 
 主机测试和完整编译的最终结果见 `VALIDATION_SZPI.md`。构建日志放在忽略的 `logs/`；
-镜像及 build 产物不进入 Git。运行前需用户提供 TF 卡和 ROM。
+镜像及 build 产物不进入 Git。实机使用已插入的多分区 TF 卡，自编测试 ROM 自动
+写入所选数据分区；商业游戏 ROM 由用户自行准备。旧固件的完整 16 MB 备份保存在
+忽略的 `backups/` 中，不进入 Git。
