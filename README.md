@@ -1,248 +1,116 @@
-# ESP32-S3 NES 触摸掌机与中文源码学习
+# ESP32-S3 NES 触摸掌机
 
-在实战派 ESP32-S3-WROOM-1-N16R8 开发板上运行 NES 游戏：ST7789 显示、双点触摸
-虚拟手柄、TF 卡读游戏与存档、ES8311 扬声器输出。基于
-[ducalex/retro-go](https://github.com/ducalex/retro-go)，保留 Nofrendo 模拟器核心，
-新增本板硬件适配和中文学习注释；CPU、PPU、APU 和 Mapper 沿用上游实现。
+基于 [Retro-Go](https://github.com/ducalex/retro-go) 的实战派 ESP32-S3 NES 游戏工程。
+使用板载 ST7789 屏幕、触摸虚拟手柄、TF 卡和 ES8311 音频，让开发板运行红白机游戏。
+工程保留 Nofrendo 模拟器核心，增加本板驱动、中文源码注释和学习文档。
 
-## 从这里开始
+## 已实现的功能
 
-| 入口 | 内容 |
+- **显示与操作**：320×240 游戏画面、菜单、半透明触摸按键，最多两个触点。
+- **游戏与存档**：从 TF 卡读取 `.nes` 文件，支持游戏菜单、保存和读取存档。
+- **声音输出**：通过 ES8311 和板载功放驱动已连接的扬声器。
+- **已有 TF 卡兼容**：识别多分区卡，选择最大的有效 FAT32 数据分区；挂载过程不会格式化或重新分区。
+- **学习入口**：提供自编测试游戏及中文注释，可跟踪启动、显示、触摸、存储和音频的数据流。
+
+菜单、触摸、测试游戏画面和扬声器已完成实机验证；自编测试游戏的存档、读档及应用切换已通过。
+另已验证《Böbl 1.1》加载运行。其他游戏完整流程、其他模拟器及长时间稳定性仍需实际测试，
+详细结果见 [实机验证记录](VALIDATION_SZPI.md)。
+
+![触摸虚拟手柄布局](docs/szpi-controls-preview.png)
+
+上图由实际 C 绘图代码在电脑上生成，用于说明按键布局，不是实机游戏截图。
+
+## 硬件要求
+
+适配 **立创实战派 ESP32-S3 开发板（ESP32-S3-WROOM-1-N16R8）**。
+
+| 部件 | 本工程使用方式 |
 |---|---|
-| [使用与构建](README_SZPI.md) | 引脚、TF 目录、触摸按键、编译和烧录 |
-| [中文学习路线](docs/中文学习路线.md) | 按源码理解启动、显示、存储、音频和模拟器 |
-| [实机验证记录](VALIDATION_SZPI.md) | 已完成的验证、故障原因、固件校验值和验证范围 |
-| [移植来源与改动](docs/SZPI_PORT.md) | 上游来源、改动文件和许可证说明 |
-| [VS Code 工作区](SZPI-NES.code-workspace) | 本机 ESP-IDF 主工程入口，打开后进入 `retro-core` |
+| ESP32-S3 | 240 MHz，16 MB Flash，8 MB Octal PSRAM |
+| ST7789 屏幕 | 320×240，SPI 接口；片选由 PCA9557 控制 |
+| FT6336 触摸 | I²C 接口，转换为方向和游戏按键 |
+| TF 卡 | SDMMC 单线模式，FAT32 数据分区 |
+| ES8311 与功放 | I²S 音频输出，需连接扬声器 |
+| BOOT 按键 | 打开系统菜单 |
 
-![虚拟手柄布局](docs/szpi-controls-preview.png)
+具体 GPIO、总线参数和初始化说明见 [本板使用说明](README_SZPI.md#硬件)。
 
-上图是实际 C 绘图代码生成的布局预览；不是实机游戏截图。
+## 打开工程、编译与烧录
 
-## 当前实测状态
+使用 **ESP-IDF 5.2.3**。VS Code 打开根目录的 **[SZPI-NES.code-workspace](SZPI-NES.code-workspace)**，
+工作区中的 `retro-core` 是 ESP-IDF 工程；仓库根目录由 `rg_tool.py` 管理两个应用。
 
-- 16 MB Flash、8 MB Octal PSRAM；菜单、触摸、测试游戏画面与扬声器已完成实物验证。
-- 自编测试 ROM 支持方向移动、A 发声、B 变色；已验证保存/读取和菜单切换。
-- 支持已有多分区 TF 卡，选择最大的有效 FAT32 数据分区，游戏放在 `/roms/nes/`。
-- 已处理一张 64 GB 卡 BPB 比 MBR 多记 1 个未使用尾部扇区的情况；不修改卡的
-  分区表或启动扇区，不扩大底层读写范围。该卡读写探测及《Böbl 1.1》加载运行通过。
-- 其他模拟器、其他游戏完整流程和长时间稳定性仍以实际测试为准。
-
-## 在 Windows 上使用
-
-打开 `SZPI-NES.code-workspace`，不要把仓库根目录当成 ESP-IDF CMake 工程。
-工作区中的 ESP-IDF 工程是 `retro-core`，完整镜像同时包含 launcher 和 retro-core。
+在已配置好工具链的本机，进入仓库根目录执行：
 
 ```powershell
-# 已配置 ESP-IDF 5.2.3 及工具路径后，在仓库根目录运行
+# 编译并打包 launcher（游戏列表）和 retro-core（模拟器）
 .\build-szpi.ps1
+
+# 编译成功后烧录已有完整镜像；将 COM5 改为实际串口
 .\build-szpi.ps1 -Action flash -Port COM5
 ```
 
-当前工作区的 IDF 路径指向本机现有安装；换电脑时按 [构建说明](README_SZPI.md)
-设置 `IdfPath`、`IdfToolsPath`，并同步调整工作区设置。无需改动模拟器代码。
-TF 卡中使用自己的或作者允许下载的 `.nes` 游戏。本板 `sdcard/roms/nes` 游戏目录
-仅包含自编 `SZPI-Controls.nes`；另行下载的游戏、原机 Flash 备份和本机运行日志
-不进入仓库。上游自带的测试资料和其他模拟器资源按原结构与许可证保留。
+`flash` 使用已经生成的镜像；修改源码后应先重新编译。完整镜像写入 Flash 的 **0x0**，
+会替换板上原有启动分区和应用，不适用于旧 OTA 工程的网页上传入口。
 
-下方保留上游 Retro-Go 的功能、安装、致谢和许可说明；其他设备的安装步骤请与
-本板 [专用说明](README_SZPI.md) 区分。
+脚本优先读取 `IDF_PATH` 和 `IDF_TOOLS_PATH`，未设置时查找旁边 `bootload` 目录中的本机工具链。
+工具链不随仓库分发；换电脑时可指定安装位置，并同步调整 VS Code 工作区内的工具链和串口设置：
 
----
+```powershell
+.\build-szpi.ps1 -IdfPath 'D:\esp\esp-idf-v5.2.3' -IdfToolsPath 'D:\esp\tools'
+```
 
-# Table of contents
-- [Description](#description)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Issues](#issues)
-- [Development](#development)
-- [Acknowledgements](#acknowledgements)
-- [License](#license)
+完整构建步骤、镜像名称和 VS Code 烧录说明见 [本板使用说明](README_SZPI.md)。
 
-# Description
-Retro-Go is a firmware to play retro games on ESP32-based devices (officially supported are
-ODROID-GO and MRGC-G32, check [this list for other devices](components/retro-go/README.md)).
-The project consists of a launcher and half a dozen applications that have been heavily
-optimized to reduce their cpu, memory, and flash needs without reducing compatibility!
+## 准备 TF 卡与游戏
 
-### Supported systems:
-- Nintendo: **NES, SNES (slow), Gameboy, Gameboy Color, Game & Watch**
-- Sega: **SG-1000, Master System, Mega Drive / Genesis, Game Gear**
-- Coleco: **Colecovision**
-- NEC: **PC Engine**
-- Atari: **Lynx**
-- Others: **DOOM** (including mods!)
+1. 使用 FAT32 数据分区；已有卡能正常挂载时无需格式化，原有文件可以保留。
+2. 将自己的或作者允许下载的 `.nes` 文件放入该分区的 **`/roms/nes/`**。
+3. 开发板断电后插卡，再上电。首次挂载成功会建立游戏目录，并在缺少同名文件时写入自编测试游戏 `SZPI-Controls.nes`。
+4. 在菜单中左右切换到 NES 分类，上下选择游戏，按 A 进入；普通游戏按 START 开始。
+5. 自编测试游戏直接运行：方向键移动图案，A 发声，B 变色。
 
-### Retro-Go features:
-- In-game menu
-- Favorites and recently played
-- GB color palettes, RTC adjust and save
-- NES color palettes, PAL roms, NSF support
-- More emulators and applications
-- Scaling and filtering options
-- Better performance and compatibility
-- Turbo Speed/Fast forward
-- Customizable launcher
-- Cover art and save state previews
-- Multiple save slots per game
-- Wifi file manager
-- And more!
+仓库的 `sdcard/roms/nes/` 仅包含自编测试游戏，不附带魂斗罗、超级玛丽等商业 ROM。
+上游自带测试资料和其他模拟器资源按原结构及许可证保留。游戏兼容性取决于 Nofrendo 对
+具体 ROM 的支持，PSRAM 容量不是唯一条件。
 
-### Screenshots
-![Preview](assets/retro-go-preview.jpg)
+已兼容一张 64 GB 卡的 FAT32 卷长度比 MBR 分区长度多记 1 个未使用尾部扇区的情况，
+保留原分区读写边界。遇到挂载错误时先查看串口日志，具体判断过程见 [验证记录](VALIDATION_SZPI.md)。
 
+## 按键操作
 
-# Installation
+| 按键 | 作用 |
+|---|---|
+| U / D / L / R | 上、下、左、右 |
+| A / B | 游戏按键；菜单中确认 / 返回 |
+| SEL / START | 选择 / 开始 |
+| M 或板上 BOOT | 系统菜单，可保存、读档和返回游戏列表 |
+| O | 设置菜单 |
 
-### ODROID-GO
-  1. Download `retro-go_1.x_odroid-go.fw` from the [release page](https://github.com/ducalex/retro-go/releases/) and copy it to `/odroid/firmware` on your sdcard.
-  2. Power up the device while holding down B.
-  3. Select retro-go in the files list and flash it.
+方向与 A/B 可以组合操作；屏幕最多两个触点，不能保证同时按下三个独立按键。
 
-### MyRetroGameCase G32 (GBC)
-  1. Download `retro-go_1.x_mrgc-g32.fw` from the [release page](https://github.com/ducalex/retro-go/releases/) and copy it to `/espgbc/firmware` on your sdcard.
-  2. Power up the device while holding down MENU (the volume knob).
-  3. Select retro-go in the files list and flash it.
+## 从源码开始学习
 
-### Other devices
-  1. Download the .img for your device from the [release page](https://github.com/ducalex/retro-go/releases/).
-  2. Connect your device to a computer with a USB cable.
-  3. Flash the image with esptool:
-     - [Command line](https://github.com/espressif/esptool/releases/): Run `esptool.py write_flash --flash_size detect 0x0 retro-go_*.img`
-     - [Web version](https://espressif.github.io/esptool-js/): Connect your device, click Erase Flash, then select your .img file and set address to 0x0, finally click Program)
+建议按“启动 → 板级初始化 → TF 读取 → NES 运行 → 图像与声音输出”的顺序阅读。
 
-Your particular device may require extra steps (like holding a button during power up) or different esptool flags or a special cable. If the above steps fail, you might need to ask the manufacturer for instructions on how to flash new firmware!
+| 文档或目录 | 阅读内容 |
+|---|---|
+| [中文学习路线](docs/中文学习路线.md) | 实际函数、调用链和学习练习 |
+| [本板使用说明](README_SZPI.md) | 引脚、构建、TF 卡、触摸和调试 |
+| [板级适配目录](components/retro-go/targets/szpi-esp32s3/) | 屏幕片选、I²C、触摸、TF 分区及串口控制 |
+| [NES 主程序](retro-core/main/main_nes.c) | ROM 载入、按键、画面和音频调度 |
+| [移植来源与改动](docs/SZPI_PORT.md) | 适配方法、改动范围和组件来源 |
+| [实机验证记录](VALIDATION_SZPI.md) | 黑屏、音频、TF 卡问题的排查和验证证据 |
 
-If your device is not already supported or if a prebuilt version isn't available for it you can check the [development section](#Development) for more information on how to build for your device.
+串口默认 **115200**；端口号按电脑实际识别结果设置。串口输入 `?` 查看调试命令，
+`g` 启动自编测试游戏，`c` 读取 TF 卡根目录的 `crash.log`。
 
+## 来源、致谢与许可
 
-# Usage
+本工程基于 [ducalex/retro-go](https://github.com/ducalex/retro-go)，固定上游提交
+`4ced120669750ca7228fd0414211430c1d923166`。感谢 Retro-Go、Nofrendo 和相关开源组件作者。
+原版英文介绍、功能说明和完整致谢保存在 [上游原始说明](README_UPSTREAM.md)。
 
-## Game covers / artwork
-Game covers should be placed in the `romart` folder at the base of your sd card. You can obtain a pre-made pack [here](https://github.com/ducalex/retro-go-covers). Retro-Go is also compatible with the older Go-Play romart pack.
-
-You can add missing cover art by creating a PNG image (160x168, 8bit). Two naming schemes are supported:
-- Filename-based: `/romart/nes/Super Mario.png` (notice the rom extension is *not* included)
-- CRC32-based: `/romart/nes/A/ABCDE123.png` where `nes` is the same as the rom folder, and `ABCDE123` is the CRC32 of the game (press A -> Properties in the launcher to find it), and `A` is the first character of the CRC32
-
-_Note: CRC32-based, which is what is used in the pre-made pack, is much slower than name-based! This type is useful because filenames vary greatly despite having identical CRCs, but if you generate your own art I suggest you use filename-based format and delete all CRC-based art from your SD Card to improve responsiveness._
-
-
-## BIOS files
-Some emulators support loading a BIOS. The files should be placed as follows:
-- GB: `/retro-go/bios/gb_bios.bin`
-- GBC: `/retro-go/bios/gbc_bios.bin`
-- FDS: `/retro-go/bios/fds_bios.bin`
-- MSX: In folder `/retro-go/bios/msx/` put: `MSX.ROM` `MSX2.ROM` `MSX2EXT.ROM` `MSX2P.ROM` `MSX2PEXT.ROM` `FMPAC.ROM` `DISK.ROM` `MSXDOS2.ROM` `PAINTER.ROM` `KANJI.ROM`
-
-
-## Game & Watch
-The roms must be packed with [LCD-Game-Shrinker](https://github.com/bzhxx/LCD-Game-Shrinker) and a tutorial can be [found here](https://gist.github.com/DNA64/16fed499d6bd4664b78b4c0a9638e4ef).
-
-
-## Wifi
-To use wifi you will need to create a `/retro-go/config/wifi.json` config file. You can define up to 4 different networks, then selectable in the menu. Its content should look like this:
-
-````json
-{
-  "ssid0": "my-network",
-  "password0": "my-password",
-  "ssid1": "my-other-network",
-  "password1": "my-password",
-  "ssid2": "my-third-network",
-  "password2": "my-password",
-  "ssid3": "my-last-network",
-  "password3": "my-password"
-}
-````
-
-### Time synchronization
-Time synchronization happens in the launcher immediately after a successful connection to the network.
-This is done via NTP by contacting `pool.ntp.org` and cannot be disabled at this time.
-Timezone can be configured in the launcher's options menu.
-
-### File manager
-You can find the IP of your device in the *about* menu of retro-go. Then on your PC navigate to
-http://192.168.x.x/ to access the file manager.
-
-
-## External DAC (headphones)
-
-Retro-Go supports [the external DAC mod for the ODROID-GO](https://github.com/backofficeshow/odroid-go-audio-hat)
-which allows high quality audio through headphones. You can switch to it in the menu `Audio Out: Ext DAC`.
-
-<details>
-  <summary>Pinout</summary>
-
-  | GO PIN | PCM5102A PIN |
-  |--------|---------|
-  | 1 | GND |
-  | 2 | - |
-  | 3 | LCK |
-  | 4 | DIN |
-  | 5 | BCK |
-  | 6 | VIN |
-  | 7 | - |
-  | 8 | - |
-  | 9 | - |
-  | 10 | - |
-</details>
-
-
-# Issues
-
-### Black screen / Boot loops
-Retro-Go typically detects and resolves application crashes and freezes automatically. However, if you do
-get stuck in a boot loop, you can hold `DOWN` while powering up the device to return to the launcher.
-
-### Sound quality
-The volume isn't correctly attenuated on the GO, resulting in upper volume levels that are too loud and
-lower levels that are distorted due to DAC resolution. A quick way to improve the audio is to cut one
-of the speaker wire and add a `33 Ohm (or thereabout)` resistor in series. Soldering is better but not
-required, twisting the wires tightly will work just fine.
-[A more involved solution can be seen here.](https://wiki.odroid.com/odroid_go/silent_volume)
-Alternatively you can use the headphones DAC mod mentioned earlier in this document.
-
-### Game Boy SRAM *(aka Save/Battery/Backup RAM)*
-In Retro-Go, save states will provide you with the best and most reliable save experience. That being said, please
-read on if you need or want SRAM saves. The SRAM format is compatible with VisualBoyAdvance so it may be used to
-import or export saves.
-
-You can configure automatic SRAM saving in the options menu. A longer delay will reduce stuttering at the cost
-of losing data when powering down too quickly. Also note that when *resuming* a game, Retro-Go will give priority
-to a save state if present.
-
-### ZIP files
-Most Retro-Go applications now support ZIP files. ZIP archives should contain only one ROM file and nothing else. ZIP support also depends on available memory and larger ROMs may fail to load on some devices unfortunately.
-
-
-# Development
-If you wish to build or modify Retro-Go, you can find help in the following documents:
-
-- Build instructions in [BUILDING.md](BUILDING.md)
-- Theming instructions [THEMING.md](THEMING.md)
-- Porting instructions in [PORTING.md](PORTING.md)
-- Translating instructions in [LOCALIZATION.md](LOCALIZATION.md)
-
-
-# Acknowledgements
-- The NES/GBC/SMS emulators and base library were originally from the "Triforce" fork of the [official Go-Play firmware](https://github.com/othercrashoverride/go-play) by crashoverride, Nemo1984, and many others.
-- The design of the launcher was originally inspired/copied from [pelle7's go-emu](https://github.com/pelle7/odroid-go-emu-launcher).
-- PCE-GO is a fork of [HuExpress](https://github.com/kallisti5/huexpress) and [pelle7's port](https://github.com/pelle7/odroid-go-pcengine-huexpress/) was used as reference.
-- The Lynx emulator is a port of [libretro-handy](https://github.com/libretro/libretro-handy).
-- The SNES emulator is a port of [Snes9x 2005](https://github.com/libretro/snes9x2005).
-- The DOOM engine is a port of [PrBoom 2.5.0](http://prboom.sourceforge.net/).
-- The Genesis emulator is a port of [Gwenesis](https://github.com/bzhxx/gwenesis/) by bzhxx.
-- The Game & Watch emulator is a port of [lcd-game-emulator](https://github.com/bzhxx/lcd-game-emulator) by bzhxx.
-- The MSX emulator is a port of [fMSX](https://fms.komkon.org/fMSX/) by Marat Fayzullin.
-- PNG support is provided by [lodepng](https://github.com/lvandeve/lodepng/).
-- PCE cover art is from [Christian_Haitian](https://github.com/christianhaitian).
-- Some icons from [Rokey](https://iconarchive.com/show/seed-icons-by-rokey.html).
-- Background images from [es-theme-gbz35](https://github.com/rxbrad/es-theme-gbz35).
-- Special thanks to [RGHandhelds](https://www.rghandhelds.com/) and [MyRetroGamecase](https://www.myretrogamecase.com/) for sending me a [G32](https://www.myretrogamecase.com/products/game-mini-g32-esp32-retro-gaming-console-1) device.
-- The [ODROID-GO](https://forum.odroid.com/viewtopic.php?f=159&t=37599) community for encouraging the development of retro-go!
-
-# License
-Everything in this project is licensed under the [GPLv2 license](COPYING) with the exception of the following components:
-- fmsx/components/fmsx (MSX Emulator, custom non-commercial license)
-- handy-go/components/handy (Lynx emulator, zlib)
+Retro-Go 主体遵循 [GPLv2 许可](COPYING)；上游说明列明 fMSX 使用自定义非商业许可，
+Handy 使用 zlib 许可。本工程引入的 `esp_codec_dev` 使用 Apache-2.0 许可；
+其余第三方代码以各目录保留的许可证和版权声明为准，来源见 [移植记录](docs/SZPI_PORT.md)。

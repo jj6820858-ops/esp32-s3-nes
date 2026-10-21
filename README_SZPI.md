@@ -3,7 +3,7 @@
 基于 [ducalex/retro-go](https://github.com/ducalex/retro-go)，固定上游提交
 `4ced120669750ca7228fd0414211430c1d923166`。保留 Retro-Go 的 launcher、Nofrendo
 NES 核心、游戏菜单、存档、显示缩放及多应用启动方式，仅增加实战派板级适配。
-上游说明保留在 [README.md](README.md)，本板使用方法以本文为准。
+仓库首页见 [中文项目说明](README.md)，上游英文原文保留在 [README_UPSTREAM.md](README_UPSTREAM.md)。本板使用方法以本文为准。
 
 ## 硬件
 
