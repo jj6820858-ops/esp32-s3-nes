@@ -107,6 +107,10 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 {
     uint32_t state = 0;
 
+#ifdef RG_TARGET_SZPI_ESP32S3
+    state |= szpi_read_touch();
+#endif
+
 #if defined(RG_GAMEPAD_ADC_MAP)
     static int old_adc_values[RG_COUNT(keymap_adc)];
     for (size_t i = 0; i < RG_COUNT(keymap_adc); ++i)
@@ -268,6 +272,11 @@ static void input_task(void *arg)
 void rg_input_init(void)
 {
     RG_ASSERT(!input_task_running, "Input already initialized!");
+#ifdef RG_TARGET_SZPI_ESP32S3
+    gamepad_mapped |= RG_KEY_UP | RG_KEY_DOWN | RG_KEY_LEFT | RG_KEY_RIGHT |
+                      RG_KEY_A | RG_KEY_B | RG_KEY_START | RG_KEY_SELECT |
+                      RG_KEY_MENU | RG_KEY_OPTION;
+#endif
 
 #if defined(RG_GAMEPAD_ADC_MAP)
     RG_LOGI("Initializing ADC gamepad driver...");

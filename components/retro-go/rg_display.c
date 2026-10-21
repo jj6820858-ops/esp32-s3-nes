@@ -3,6 +3,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifdef RG_TARGET_SZPI_ESP32S3
+#include "szpi_touch.h"
+#endif
 
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
 
@@ -231,6 +234,10 @@ static inline void write_update(const rg_surface_t *update)
         {
             int left = display.screen.margins.left + draw_left;
             int top = display.screen.margins.top + draw_top + y - lines_to_copy;
+#ifdef RG_TARGET_SZPI_ESP32S3
+            for (int line = 0; line < lines_to_copy; ++line)
+                szpi_touch_overlay_row(line_buffer + line * draw_width, left, top + line, draw_width);
+#endif
             if (top != window_top)
                 lcd_set_window(left, top, draw_width, lines_remaining);
             lcd_send_buffer(line_buffer, draw_width * lines_to_copy);
@@ -565,6 +572,10 @@ void rg_display_write_rect(int left, int top, int width, int height, int stride,
             }
         }
 
+#ifdef RG_TARGET_SZPI_ESP32S3
+        for (size_t line = 0; line < num_lines; ++line)
+            szpi_touch_overlay_row(lcd_buffer + line * width, left, top + y + line, width);
+#endif
         lcd_send_buffer(lcd_buffer, width * num_lines);
         y += num_lines;
     }
@@ -579,6 +590,20 @@ void rg_display_clear_rect(int left, int top, int width, int height, uint16_t co
     if (pixels_remaining > 0)
     {
         lcd_set_window(left + display.screen.margins.left, top + display.screen.margins.top, width, height);
+#ifdef RG_TARGET_SZPI_ESP32S3
+        for (int y = 0; y < height; )
+        {
+            uint16_t *buffer = lcd_get_buffer(LCD_BUFFER_LENGTH);
+            int lines = RG_MIN(LCD_BUFFER_LENGTH / width, height - y);
+            for (int line = 0; line < lines; ++line)
+            {
+                for (int x = 0; x < width; ++x) buffer[line * width + x] = color_be;
+                szpi_touch_overlay_row(buffer + line * width, left, top + y + line, width);
+            }
+            lcd_send_buffer(buffer, width * lines);
+            y += lines;
+        }
+#else
         while (pixels_remaining > 0)
         {
             uint16_t *buffer = lcd_get_buffer(LCD_BUFFER_LENGTH);
@@ -588,6 +613,7 @@ void rg_display_clear_rect(int left, int top, int width, int height, uint16_t co
             lcd_send_buffer(buffer, pixels);
             pixels_remaining -= pixels;
         }
+#endif
     }
 }
 

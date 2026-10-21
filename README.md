@@ -1,3 +1,5 @@
+> 实战派 ESP32-S3 独立移植工程：请先阅读 [README_SZPI.md](README_SZPI.md)。以下保留上游原始说明。
+
 # Table of contents
 - [Description](#description)
 - [Installation](#installation)

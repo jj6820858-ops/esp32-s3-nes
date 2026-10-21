@@ -8,6 +8,9 @@ extern const rg_audio_driver_t rg_audio_driver_dummy;
 extern const rg_audio_driver_t rg_audio_driver_buzzer;
 extern const rg_audio_driver_t rg_audio_driver_i2s;
 extern const rg_audio_driver_t rg_audio_driver_sdl2;
+#if RG_AUDIO_USE_SZPI_CODEC
+extern const rg_audio_driver_t rg_audio_driver_szpi;
+#endif
 
 // static const rg_audio_driver_t *drivers[] = {
 //     NULL,
@@ -15,6 +18,9 @@ extern const rg_audio_driver_t rg_audio_driver_sdl2;
 
 static const rg_audio_sink_t sinks[] = {
     {&rg_audio_driver_dummy,  0, "Dummy"  },
+#if RG_AUDIO_USE_SZPI_CODEC
+    {&rg_audio_driver_szpi,   0, "Speaker"},
+#endif
 #if RG_AUDIO_USE_INT_DAC
     {&rg_audio_driver_i2s,    0, "Speaker"},
 #endif

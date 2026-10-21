@@ -134,6 +134,9 @@ void rg_storage_init(void)
     slot_config.d0 = RG_GPIO_SDSPI_D0;
     // d1 and d3 normally not used in width=1 but sdmmc_host_init_slot saves them, so just in case
     slot_config.d1 = slot_config.d3 = -1;
+#ifdef RG_TARGET_SZPI_ESP32S3
+    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+#endif
 #endif
 
     esp_vfs_fat_mount_config_t mount_config = {
